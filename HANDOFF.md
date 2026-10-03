@@ -46,8 +46,14 @@ unknown-function line formats, worst-case line length, the marker text, t3.5 at
   16MB flash, DevKitC-1 "USB" port). /dev/ttyACM0 shows the three canned frames
   with correct decode, both OK and BAD_CRC. The DROPPED path was also seen for
   real: with no reader attached the USB writes stall, the 8-deep channel fills
-  and "[DROPPED 4 frames]" appeared inline once a reader reattached. The
-  default (real sniffer) build has not been flashed or run against a bus.
+  and "[DROPPED 4 frames]" appeared inline once a reader reattached.
+  Real sniffer build VERIFIED on a live RS-485 link 2026-10-03: an FTDI FT232R
+  USB-RS485 adapter (/dev/ttyUSB0) drove 9600 8E1 frames into the isolated
+  module -> GPIO4. Requests, responses, exception (0x83), BAD_CRC and a burst
+  at 20 ms gaps all decoded correctly; a zero-gap burst merges into one frame,
+  which is correct RTU behaviour. Not yet tested on a real Modbus device bus.
+  Wiring lessons: GPIO4 floating looks like silence (check with a pull-up);
+  A/B reversed shows as the line idling LOW with the data inverted.
   Gotcha: right after `espflash flash` (no --monitor) the app produced nothing
   until `espflash monitor` reset the chip; `cargo run --release` (which uses
   --monitor) avoids this, or press RESET.
@@ -171,13 +177,14 @@ the real `target_directory`.
   the traits come from `embedded_io_async::Write` (esp-hal's `unstable` feature
   enables that impl).
 - Input: `UartRx::new(UART1, config).with_rx(GPIO4).into_async()`, 9600 8E1, RX
-  FIFO full threshold 32, hardware RX idle timeout 2 symbol times (~2.29 ms).
-  `read_async` therefore returns once per burst; the frame boundary is still
-  `select(read_async, Timer::after(frame_timeout_us(BAUD_RATE)))`. Timing check
-  at 9600: read returns at last_byte+2.29 ms, the t3.5 timer then fires at
-  +6.87 ms, while the earliest a correctly-gapped 1-byte next frame could be
-  reported is +7.44 ms - so frames stay separated. Note `RxConfig::timeout` is in
-  symbol times and the register caps `timeout * symbol_len` at 1023 bits.
+  FIFO full threshold 1, hardware RX idle timeout 2 symbol times. The frame
+  boundary is `select(read_async, Timer::after(frame_timeout_us(BAUD_RATE)))`,
+  and the timer restarts each time a read returns, so reads MUST return per
+  byte. The original threshold of 32 split every frame on hardware: the read
+  stayed pending mid-frame, the t3.5 timer fired while bytes were still
+  arriving, and the next read_async returned the partial FIFO immediately.
+  Note `RxConfig::timeout` is in symbol times and the register caps
+  `timeout * symbol_len` at 1023 bits.
 - Panic: esp-backtrace `panic-handler` + `println`, with esp-println pinned to
   `jtag-serial` (NOT its default `auto`). Panics print on the same /dev/ttyACM0
   as the analyzer output. It coexists with the async driver because esp-println's
@@ -250,11 +257,10 @@ handling; the task structure.
 
 Needs hardware, in order:
 
-1. ESP32-C6: (selftest DONE 2026-10-03.) Wire the module to GPIO4, flash the
-   default build and check real traffic once a Modbus bus is available.
-2. ESP32-C6: confirm the UART framing choices on real traffic - the 2-symbol
-   hardware RX idle timeout and the 32-byte FIFO threshold are reasoned about but
-   not measured.
+1. ESP32-C6: (selftest and FTDI-driven traffic DONE 2026-10-03.) Sniff a real
+   Modbus master/slave bus.
+2. ESP32-C6: enable the internal pull-up on the RX pin so a loose wire idles
+   instead of producing noise frames.
 3. ESP32-C6: confirm that a panic really does print on /dev/ttyACM0 while the
    async driver has been running.
 4. STM32F411: replug the ST-Link, `probe-rs download` the default build, cold

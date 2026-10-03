@@ -63,16 +63,18 @@ const BAUD_RATE: u32 = 9_600;
 #[cfg(not(feature = "selftest"))]
 type RxPin = esp_hal::peripherals::GPIO4<'static>;
 
-/// RX FIFO level that wakes `read_async`. Modest on purpose: the 128-byte
-/// hardware FIFO then holds plenty of slack while the USB task is busy, and a
-/// long frame is handed over in pieces instead of all at once.
+/// RX FIFO level that wakes `read_async`. Must be 1: the frame timer in
+/// `frame_receiver` restarts every time a read returns, so a read has to return
+/// as soon as any byte arrives. With a higher threshold the read stays pending
+/// mid-frame, the t3.5 timer fires while bytes are still streaming in, and
+/// frames get split (seen on hardware with 32). The 128-byte hardware FIFO still
+/// absorbs any latency in servicing the interrupt.
 #[cfg(not(feature = "selftest"))]
-const RX_FIFO_THRESHOLD: u16 = 32;
+const RX_FIFO_THRESHOLD: u16 = 1;
 
-/// Hardware RX idle timeout, in symbol (character) times. Two symbols is ~2.29
-/// ms at 9600 8E1, comfortably shorter than the ~4.58 ms t3.5 frame timeout, so
-/// `read_async` returns once per burst and the software timer below is the thing
-/// that actually decides where a frame ends.
+/// Hardware RX idle timeout, in symbol (character) times. With a FIFO threshold
+/// of 1 this rarely matters; it only flushes stragglers. The software timer in
+/// `frame_receiver` is what decides where a frame ends.
 #[cfg(not(feature = "selftest"))]
 const RX_IDLE_SYMBOLS: u8 = 2;
 
