@@ -358,6 +358,14 @@ cargo test -p modbus-sniffer-tools     # drives the daemon against a fake device
 See [tools/README.md](tools/README.md) for the systemd unit, the control CLI and
 the mapping workflow.
 
+## Heat pump documentation
+
+`docs/` holds what is known about the target bus (a WFI-028T/035T pool heat pump
+and its wired controller): `register-map.md` is the working register map built
+from captures and is the spec for a replacement controller; the vendor manual,
+the WFI Modbus sheet and a generic factory protocol document are kept next to it
+with plain-text extractions for searching.
+
 ## Scope
 
 The **firmware** is a frame logger, not a protocol analyzer. It decodes the

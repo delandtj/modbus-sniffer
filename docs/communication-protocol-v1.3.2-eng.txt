@@ -1,0 +1,897 @@
+Text extraction of communication-protocol-v1.3.2-eng.docx (tables as ' | ' rows), ASCII-folded.
+NOTE: written for an air-to-water heat pump; its register map does NOT match the WFI pool unit's bus. See register-map.md.
+
+Communication Protocol
+1.1Communication Method
+The wire controller, PC and external unit are connected by RS485 bus, the wire controller, PC is the communication master, and the external unit is the communication slave, the communication topology is as follows.
+Wire Controller(Master)Wire Controller(Master)PCVirtual MasterPCVirtual MasterUnit#2(Salve)Unit#2(Salve)Unit#1(Salve)Unit#1(Salve)
+Address convention: range 1-255
+Address 0: broadcast address, use broadcast command to send data, all units receive data but do not reply.
+1.2Communication Time Sequence
+This communication adopts master-slave answering half-duplex asynchronous serial communication mode, and the external machine works in the slave state. After the slave receives the command from the host, it waits for 100ms after the end of communication for the next transmission, and each time the access address is not more than 100; since the PC and the line controller are the same as the host, the communication time must be staggered, and it can be used to take turns to send.
+1.3 Communication Protocol Description
+1. Communication using RS485 bus, asynchronous serial signal 1 start bit, 8 data bits, 1 end bit, no parity, baud rate 9600.
+2. In line with the standard MODBUS RTU protocol, 16-bit data structure, 16-bit CRC checksum, low byte in front of the high byte in the back.
+3. The state temperature and set temperature all X10 processing, such as 255, representing 25.5
+4.There are three commands used for master-slave communication:
+4.1. Command 03H (query 1 or more registers)
+Send command: [device address] + [command number 03H] + [start register address high 8 bits] + [low 8 bits] + [read the number of registers high 8 bits] + [low 8 bits] + [low 8 bits] + [low 8 bits of the CRC checksum] + [high 8 bits of the CRC checksum]
+Device response: [Device address] + [Command number 03H] + [Number of bytes returned] + [Data 1 high 8 bits] + [Data 1 high low bits] +... + [Data n] + [Lower 8 bits of CRC checksum] + [Higher 8 bits of CRC checksum]
+4.2. Command 06H (Modify single register)
+Send Command: [Device Address] + [Command No. 06H] + [Register address to be lowered high 8 bits] + [low 8 bits] + [Data to be lowered high 8 bits] + [low 8 bits] + [Low 8 bits] + [Low 8 bits of CRC check] + [High 8 bits of CRC check]
+Device response: if successful, return the command sent by the computer as it is, otherwise, do not respond.
+4.3. Command 10H (modify multiple registers)
+Send command: [device address] + [command number 10H] + [start register address high 8 bits] + [low 8 bits] + [number of registers high 8 bits] + [low 8 bits] + [number of register bytes] + [data 1 high 8 bits] + [low 8 bits] + .... + [Data N high 8 bits] + [low 8 bits] + [low 8 bits of CRC checksum] + [high 8 bits of CRC checksum]
+Device response: [Device address] + [Command number 10H] + [Start register address high 8 bits] + [Low 8 bits] + [Number of registers high 8 bits] + [Low 8 bits] + [Low 8 bits] + [Low 8 bits of CRC check] + [High 8 bits of CRC check.
+4.4. Command 01H (Query 1 or more coils) (valid for communication protocol >=130)
+Send command: [Device address] + [Command No. 01H] + [Start coil address high 8 bits] + [Low 8 bits] + [Read coil number high 8 bits] + [Low 8 bits] + [Low 8 bits] + [Low 8 bits of CRC check] + [High 8 bits of CRC check
+Device response: [Device address] + [Command number 01H] + [Number of bytes returned] + [Data 1] + [Data 2] + ... + [Data n] + [Lower 8 bits of CRC checksum] + [Higher 8 bits of CRC checksum]
+Note: A single data contains the values of 8 coils.
+4.5. Command 05H (Modify single coil) (valid for communication protocol >= 130)
+Send command: [Device address] + [Command No. 05H] + [High 8 bits of coil address to be placed] + [Low 8 bits] + [High 8 bits of data to be placed] + [Low 8 bits] + [Low 8 bits] + [Low 8 bits of CRC check] + [High 8 bits of CRC check]
+Device response: if successful return the command sent by the computer as is, otherwise no response
+Note: If the lower data is zero, the coil is set to zero; if the lower data is not zero, the coil is set to one;
+4.6. Sending other commands is invalid, and does not respond to the data
+No. | Name | Address Ranges | Read-Write | Note
+1 | Real-time status and faults | 0x0000~0x003F | R | 64Bit
+2 | Real-time data | 0x0040~0x00FF | R | 192Bit
+3 | System Parameters P | 0x0100~0x02FF | RW | 512Bit
+4 | User Parameters | 0x0300~0x032F | RW | 48Bit
+5 | User Commands | 0x0330~0x035F | RW | 48Bit
+6 | Version Information | 0x0360~0x036F | R | 16Bit
+7 | System Parameters L | 0x0800~0x083F | RW | 64Bit
+8 | Bit operation commands | 0x1000~0x10FF | RW | 256Bit
+
+1. Real-time data  0x0000~0x03FIncludes: Data on switch ports, relays, dip switches, faults, etc.
+Adress | Name | Address Ranges | Default Value | Read-Write | Note
+0x0000 | Running Status 1 | Bit Definitions |  | R | 
+0x0001 | Running Status 2 | Bit Definitions |  | R | 
+0x0002 | Error Status 1 | Bit Definitions |  | R | 
+0x0003 | Error Status 2 | Bit Definitions |  | R | 
+0x0004 | Error Status 3 | Bit Definitions |  | R | 
+0x0005 | System 1 Error Status 1 | Bit Definitions |  | R | 
+0x0006 | System 1 Error Status 2 | Bit Definitions |  | R | 
+0x0007 | System 1 Driver Error Status 1 | Bit Definitions |  | R | 
+0x0008 | System 1 Driver Error Status 2 | Bit Definitions |  | R | 
+0x0009 | System 1 Driver Error Status 3 | Bit Definitions |  | R | 
+0x000A | System 2 Error Status 1 | Bit Definitions |  | R | Refer to 0x0005
+0x000B | System 2 Error Status 2 | Bit Definitions |  | R | Refer to 0x0006
+0x000C | System 2 Driver Error Status 1 | Bit Definitions |  | R | Refer to 0x0007
+0x000D | System 2 Driver Error Status 2 | Bit Definitions |  | R | Refer to 0x0008
+0x000E | System 2 Driver Error Status 3 | Bit Definitions |  | R | Refer to 0x0009
+0x000F |  | Bit Definitions |  | R | Refer to 0x0005
+0x0010 |  | Bit Definitions |  | R | Refer to 0x0006
+0x0011 |  | Bit Definitions |  | R | Refer to 0x0007
+0x0012 |  | Bit Definitions |  | R | Refer to 0x0008
+0x0013 |  | Bit Definitions |  | R | Refer to 0x0009
+0x0014 |  | Bit Definitions |  | R | Refer to 0x0005
+0x0015 |  | Bit Definitions |  | R | Refer to 0x0006
+0x0016 |  | Bit Definitions |  | R | Refer to 0x0007
+0x0017 |  | Bit Definitions |  | R | Refer to 0x0008
+0x0018 |  | Bit Definitions |  | R | Refer to 0x0009
+0x0019 | Relay Output Status 1 | Bit Definitions |  | R | 
+0x001A | Relay Output Status 2 | Bit Definitions |  | R | 
+0x001B | Relay Output Status 3 | Bit Definitions |  | R | 
+0x001C | Relay Output Status 4 | Bit Definitions |  | R | 
+0x001D | Switch Port Status 1 | Bit Definitions |  | R | 
+0x001E | Switch Port Status 2 | Bit Definitions |  | R | 
+0x001F | Switch Port Status 3 | Bit Definitions |  | R | 
+0x0020 | Switch Port Status 4 | Bit Definitions |  | R | 
+0x0021 |  | Real Value |  | R | 
+0x0022 |  | Real Value |  | R | 
+0x0023 |  | Real Value |  | R | 
+0x0024 | Current Unit Tool Number | Real Value |  | R | 
+0x0025 |  | Real Value |  | R | 
+0x0026 |  | Real Value |  | R | 
+0x0027 | Compressor 1Target Frequency | Real Value |  | R | 
+0x0028 | Compressor 2 Target Frequency | Real Value |  | R | 
+...... |  |  |  | R | 
+0x003F | Reserve |  |  |  | 
+
+2. Real-time data  0x0040~0x00FFIncludes: temperature, voltage, pressure, expansion valve opening and other data
+Adress | Name | Address Ranges | Default Value | Read-Write | Note
+0x0040 | Compressor Running Frequency | Real Value | Real Value | R | 
+0x0041 | Fan Running Speed | Real Value | Real Value | R | 
+0x0042 | EEV Open Step | Real Value | Real Value | R | 
+0x0043 | EVI Valve Open Step | Real Value | Real Value | R | 
+0x0044 | AC Input Voltage | Real Value | Real Value | R | 
+0x0045 | AC Input Current | Real Value | Real Value | R | Display Value = Real Value/10
+0x0046 | Compressor Phase Current | Real Value | Real Value | R | Display Value = Real Value/10
+0x0047 | Compressor IPM Temp. | Real Value | Real Value | R | 
+0x0048 | High Pressure Saturation Temp. | Real Value | Real Value | R | 
+0x0049 | Low Pressure Saturation Temp. | Real Value | Real Value | R | 
+0x004A | Ambient Temp. T1 | Real Value | Real Value | R | 
+0x004B | Outer Coil Temp. T2 | Real Value | Real Value | R | 
+0x004C | Inner Coil Temp. T3 | Real Value | Real Value | R | 
+0x004D | Suction Temp. T4 | Real Value | Real Value | R | 
+0x004E | Exhaust Temp. T5 | Real Value | Real Value | R | 
+0x004F | Water Inlet Temp. T6 | Real Value | Real Value | R | 
+0x0050 | Water Outlet Temp. T7 | Real Value | Real Value | R | 
+0x0051 | Economizer Inlet Temp. T8 | Real Value | Real Value | R | 
+0x0052 | Economizer Outlet Temp. T9 | Real Value | Real Value | R | 
+0x0053 | Current Unit Tool Number | Real Value | Real Value | R | 
+0x0054 | DHW Tank Temp. | Real Value | Real Value | R | 
+0x0055 | Plate Heat Exchanger Exhaust Temp. | Real Value | Real Value | R | 
+0x0056 | Driver Manufacturer | Real Value | Real Value | R | 
+0x0057 | Water Pump Speed PWM | Real Value | Real Value | R | 
+0x0058 | Water Flow | Real Value | Real Value | R | 
+0x0059 | DHW Return Water Temp. | Real Value | Real Value | R | 
+0x005A | Unit Input Voltage | Real Value | Real Value | R | 
+0x005B | Unit Input Current | Real Value | Real Value | R | Display Value = Real Value/100
+0x005C | Unit Input Power / kw | Real Value | Real Value | R | Display Value = Real Value/100
+0x005D | Unit Power Consumption / kwh | Real Value | Real Value | R | 
+0x005E | System 2 Compressor Running Frequency |  |  |  | 
+0x005F | System 2 Fan Running Speed |  |  |  | 
+0x0060 | System 2 EEV Open Step |  |  |  | 
+0x0061 | System 2 EVI Valve Open Step |  |  |  | 
+0x0062 | System 2 AC Input Voltage |  |  |  | 
+0x0063 | System 2 AC Input Current |  |  |  | Display Value = Real Value/10
+0x0064 | System 2 Compressor Phase Current |  |  |  | Display Value = Real Value/10
+0x0065 | System 2 Compressor IPM Temp. |  |  |  | 
+0x0066 | System 2 High Pressure Saturation Temp. |  |  |  | 
+0x0067 | System 2 Low Pressure Saturation Temp. |  |  |  | 
+0x0068 | System 2 Outer Coil Temp. |  |  |  | 
+0x0069 | System 2 Inner Coil Temp. |  |  |  | 
+0x006A | System 2 Suction Temp. |  |  |  | 
+0x006B | System 2 Exhaust Temp. |  |  |  | 
+0x006C | System 2 Economizer Inlet Temp. |  |  |  | 
+0x006D | System 2 Economizer Outlet Temp. |  |  |  | 
+ |  |  |  |  | 
+ |  |  |  |  | 
+ |  |  |  |  | 
+0x0072 | Solar Water Heater Temp. | Real Value | Real Value | R | 
+0x0073 | Zone 2 Temp. | Real Value | Real Value | R | 
+0x0074 | Butter Tank Temp. | Real Value | Real Value | R | 
+0x0075 | Total Water Outlet Temp. | Real Value | Real Value | R | 
+0x0076 | Unit B Phase Input Voltage | Real Value | Real Value | R | 
+0x0077 | Unit B Phase Input Current | Real Value | Real Value | R | =/100
+0x0078 | Unit C Phase Input Voltage | Real Value | Real Value | R | 
+0x0079 | Unit C Phase Input Current | Real Value | Real Value | R | =/100
+0x007A | Smart Grid Status | Real Value | Real Value | R | 
+0x007B | Zone 2 Mixing Valve Opening | Real Value | Real Value | R | 
+0x007C | Zone 1 Mixing Temp. | Real Value | Real Value | R | 
+0x007D | Zone 1 Mixing Valve Opening | Real Value | Real Value | R | 
+ |  |  |  |  | 
+ |  |  |  |  | 
+ |  |  |  |  | 
+0x00E0 | Number(A change in the number indicates a 6-minute data update) |  |  |  | 
+0x00E1 | Power consumption in 6 min (Unit:Wh) |  |  |  | 
+0x00E2 | Cooling capacity  in 6min (Unit:W) |  |  |  | 
+0x00E3 | EER in 6min |  |  |  | 
+0x00E4 | Current EER |  |  |  | 
+0x00E5 | Output power of cooling-High 16bit |  |  |  | 
+0x00E6 | Output power of cooling-Low 16bit |  |  |  | 
+0x00E7 |  |  |  |  | 
+0x00E8 |  |  |  |  | 
+0x00E9 | Heating capacity in 6min (Unit:W) |  |  |  | 
+0x00EA | COP in 6min |  |  |  | 
+0x00EB | Current COP |  |  |  | 
+0x00EC | Output power of heating-High 16bit |  |  |  | 
+0x00ED | Output power of heating-Low 16bit |  |  |  | 
+0x00EE |  |  |  |  | 
+0x00EF |  |  |  |  | 
+ |  |  |  |  | 
+ |  |  |  |  | 
+ |  |  |  |  | 
+ |  |  |  |  | 
+0x00F0 |  |  |  |  | 
+0x00F1 |  |  |  |  | 
+0x00F2 |  |  |  |  | 
+0x00F3 |  |  |  |  | 
+0x00F4 |  |  |  |  | 
+0x00F5 |  |  |  |  | 
+0x00F6 |  |  |  |  | 
+0x00F7 |  |  |  |  | 
+0x00F8 |  |  |  |  | 
+0x00F9 |  |  |  |  | 
+0x00FA | Upper Limit of underfloor heating/heating Set Temp. | Real Value | Real Value | R | 
+0x00FB | Lower Limit of underfloor heating/heating Set Temp. | Real Value | Real Value | R | 
+0x00FC | Upper Limit of DHW Set Temp. | Real Value | Real Value | R | 
+0x00FD | Upper Limit of DHW Set Temp. | Real Value | Real Value | R | 
+0x00FE | Upper Limit of Cooling Set Temp. | Real Value | Real Value | R | 
+0x00FF | Upper Limit of Cooling Set Temp. | Real Value | Real Value | R | 
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+Running Status 1(1: Enable)(0: Disable) | Bit0 | Refrigerant Recovery |  | Running Status 2(1: Enable)(0: Disable) | Bit0 | Sterilization
+ | Bit1 | Primary Anti-freeze |  |  | Bit1 | Sterilization and Insulation
+ | Bit2 | Secondary Anti-freeze |  |  | Bit2 | 
+ | Bit3 | Fault Alarm |  |  | Bit3 | 
+ | Bit4 | System oil return |  |  | Bit4 | 
+ | Bit5 |  |  |  | Bit5 | 
+ | Bit6 |  |  |  | Bit6 | 
+ | Bit7 |  |  |  | Bit7 | 
+ | Bit8 | System Frosting |  |  | Bit8 | 
+ | Bit9 |  |  |  | Bit9 | 
+ | Bit10 |  |  |  | Bit10 | Wire Controller Control on/off
+ | Bit11 |  |  |  | Bit11 | 
+ | Bit12 | Shutdown after Reaching Temp. |  |  | Bit12 | 
+ | Bit13 | Shutdown after Unit Failure |  |  | Bit13 | 
+ | Bit14 | Unit Operation |  |  | Bit14 | 
+ | Bit15 | Unit Waiting for Operation |  |  | Bit15 | 
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+Error Status 10x0002(1: Error Enable)(0: Error Disable) | Bit0 | Wrong Phase |  | Error Status 2 | Bit0 | Ambient Temp. Too Low
+ | Bit1 | Missing Phase |  |  | Bit1 | 
+ | Bit2 | Water Flow Failure |  |  | Bit2 | 
+ | Bit3 | Communication Failure |  |  | Bit3 | 
+ | Bit4 | Emergency Failure |  |  | Bit4 | 
+ | Bit5 | Out of Use Time |  |  | Bit5 | 
+ | Bit6 | Water Tank Temp. Sensor Failure |  |  | Bit6 | Indoor Ambient Humidity Failure
+ | Bit7 | Water Inlet Temp. Sensor Failure |  |  | Bit7 | 
+ | Bit8 | Indoor Ambient Temp. Sensor Failure |  |  | Bit8 | 
+ | Bit9 | Outdoor Ambient Temp. Sensor Failure |  |  | Bit9 | 
+ | Bit10 | DHW Return Water Temp. Sensor Failure |  |  | Bit10 | 
+ | Bit11 | Water Outlet Temp. Too Low in Cooling Mode |  |  | Bit11 | Phase Sequence Dip Switch Error
+ | Bit12 | Water Level Switch Failure |  |  | Bit12 | 
+ | Bit13 | Water Outlet Temp. Sensor Failure |  |  | Bit13 | Water Pump 1 Failure
+ | Bit14 | Water Outlet Temp. Too High in Heating Mode |  |  | Bit14 | Water Pump 2 Failure
+ | Bit15 | Large Temp. Difference between Water Inlet and Outlet |  |  | Bit15 | Low Water Flow
+
+Name | Bit | Status Valve
+Error Status 3 | Bit0 | Phase Sequence Disconnected
+ | Bit1 | Expansion Board Communication Failure
+ | Bit2 | Plate Heat Exchanger Temp. Sensor Failure
+ | Bit3 | Fan Board 1 Communication Failure
+ | Bit4 | Fan Board 2 Communication Failure
+ | Bit5 | Cascade Model Mismatch
+ | Bit6 | Solar Water Heater Temp. Sensor Failure
+ | Bit7 | AHS Temp. Sensor Failure
+ | Bit8 | Buffer Tank Temp. Sensor Failure
+ | Bit9 | Total Water Outlet Temp. Sensor Failure
+ | Bit10 | Reserve
+ | Bit11 | Reserve
+ | Bit12 | Zone 1 Temp. Sensor Failure
+ | Bit13 | Reserve
+ | Bit14 | Reserve
+ | Bit15 | Reserve
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+System 1Error Status 1 | Bit0 | High Pressure Switch Failure |  | System 1Error Status 2 | Bit0 | High Pressure Sensor Failure
+ | Bit1 | Low Pressure Switch Failure |  |  | Bit1 | Low Pressure Sensor Failure
+ | Bit2 | High Pressure Too High |  |  | Bit2 | Middle Pressure Switch Failure
+ | Bit3 | Low Pressure Too Low |  |  | Bit3 | Coil Temp. Too High
+ | Bit4 | Exhaust Pressure Too High |  |  | Bit4 | Compressor Drive Board Communication Failure
+ | Bit5 | Current Protection |  |  | Bit5 | After heat recover temperature sensor failure
+ | Bit6 | Coil Pressure Too High |  |  | Bit6 | 
+ | Bit7 | Coil Temp. Sensor Failure |  |  | Bit7 | 
+ | Bit8 | Suction Temp. Sensor Failure |  |  | Bit8 | 
+ | Bit9 | Exhaust Temp. Sensor Failure |  |  | Bit9 | 
+ | Bit10 | Economizer Inlet Temp. Sensor Failure |  |  | Bit10 | 
+ | Bit11 | Economizer Outlet Temp. Sensor Failure |  |  | Bit11 | 
+ | Bit12 | Fan Drive Board Communication Failure |  |  | Bit12 | 
+ | Bit13 | Fan Failure |  |  | Bit13 | 
+ | Bit14 | Cooling Coil Temp. Sensor Failure |  |  | Bit14 | 
+ | Bit15 | Reserve |  |  | Bit15 | 
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+System 1Driver Board Error Status 1 | Bit0 | IPM Overcurrent/IPM Module Protection |  | System 1Driver Board Error Status 2 | Bit0 | Compressor Overcurrent Alarm
+ | Bit1 | Compressor Driver Failure |  |  | Bit1 | Compressor Weak Magnetic Protection Alarm
+ | Bit2 | Compressor Overcurrent |  |  | Bit2 | IPM Overheat Alarm
+ | Bit3 | Input Voltage Missing Phase |  |  | Bit3 | PFC Overheat Alarm
+ | Bit4 | IPM Current Sampling Failure |  |  | Bit4 | AC Input Overcurrent Alarm
+ | Bit5 | Power Component Overheating and Shutdown |  |  | Bit5 | EEPROM Error Alarm
+ | Bit6 | Pre-charge Failure |  |  | Bit6 | N/A
+ | Bit7 | DC Bus Overvoltage |  |  | Bit7 | EEPROM Refresh Complete
+ | Bit8 | DC Bus Undervoltage |  |  | Bit8 | Temperature Sensing Failure Limit
+ | Bit9 | AC Input Undervoltage |  |  | Bit9 | AC Undervoltage Frequency Limit Protection Alarm;
+ | Bit10 | AC Input Overvoltage |  |  | Bit10 | N/A
+ | Bit11 | Input Voltage Sampling Failure |  |  | Bit11 | N/A
+ | Bit12 | DSP and PFC Communication Failure |  |  | Bit12 | N/A
+ | Bit13 | Board Radiator Temp. Sensor Failure |  |  | Bit13 | N/A
+ | Bit14 | DSP and Communicate Board Communication Failure |  |  | Bit14 | N/A
+ | Bit15 | Communication Failure with Motherboard |  |  | Bit15 | N/A
+
+Name | Bit | Status Valve
+System 1Driver Board Error Status 3 | Bit0 | IPM Module Overheat and Shutdown
+ | Bit1 | Compressor Missing Phase
+ | Bit2 | Compressor Overload
+ | Bit3 | Input Current Sampling Failure
+ | Bit4 | IPM Supply Voltage Failure
+ | Bit5 | Pre-charge Circuit Voltage Failure
+ | Bit6 | EEPROM Failure
+ | Bit7 | AC Input Overvoltage Failure
+ | Bit8 | Microelectronics Failure
+ | Bit9 | Compressor Type Code Failure
+ | Bit10 | Current Sampling Signal Overcurrent
+ | Bit11 | N/A
+ | Bit12 | N/A
+ | Bit13 | N/A
+ | Bit14 | N/A
+ | Bit15 | N/A
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+System 2 Error Status 1 | Bit0 | High Pressure Switch 2 Failure |  | System 2Error Status 2 | Bit0 | High Pressure Sensor 2 Failure
+ | Bit1 | Low Pressure Switch 2 Failure |  |  | Bit1 | Low Pressure Sensor 2 Failure
+ | Bit2 | High Pressure 2 Too High |  |  | Bit2 | Middle Pressure Switch 2 Failure
+ | Bit3 | High Pressure 2 Too Low |  |  | Bit3 | Coil Temp. 2 Too High
+ | Bit4 | Exhaust Pressure 2 Too High |  |  | Bit4 | Compressor Drive Board 2 Communication Failure
+ | Bit5 | Current 2 Protection |  |  | Bit5 | 
+ | Bit6 | Coil 2 Pressure Too High |  |  | Bit6 | 
+ | Bit7 | Coil 2 Temp. Sensor Failure |  |  | Bit7 | 
+ | Bit8 | Suction 2 Temp. Sensor Failure |  |  | Bit8 | 
+ | Bit9 | Exhaust 2 Temp. Sensor Failure |  |  | Bit9 | 
+ | Bit10 | Economizer 2 Inlet Temp. Sensor Failure |  |  | Bit10 | 
+ | Bit11 | Economizer 2 Outlet Temp. Sensor Failure |  |  | Bit11 | 
+ | Bit12 | Fan Drive 2 Board Communication Failure |  |  | Bit12 | 
+ | Bit13 | Fan 2 Failure |  |  | Bit13 | 
+ | Bit14 | Cooling 2 Coil Temp. Sensor Failure |  |  | Bit14 | 
+ | Bit15 | Reserve |  |  | Bit15 | 
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+System 2Driver Board Error Status 1 | Bit0 | IPM Overcurrent/IPM Module Protection |  | System 2Driver Board Error Status 2 | Bit0 | Compressor Overcurrent Alarm
+ | Bit1 | Compressor Driver Failure |  |  | Bit1 | Compressor Weak Magnetic Protection Alarm
+ | Bit2 | Compressor Overcurrent |  |  | Bit2 | PIM Overheat Alarm
+ | Bit3 | Input Voltage Missing Phase |  |  | Bit3 | PFC Overheat Alarm
+ | Bit4 | IPM Current Sampling Failure |  |  | Bit4 | AC Input Overcurrent Alarm
+ | Bit5 | Power Component Overheating and Shutdown |  |  | Bit5 | EEPROM Error Alarm
+ | Bit6 | Pre-charge Failure |  |  | Bit6 | N/A
+ | Bit7 | DC Bus Overvoltage |  |  | Bit7 | EEPROM Refresh Complete
+ | Bit8 | DC Bus Undervoltage |  |  | Bit8 | Temperature Sensing Failure Limit
+ | Bit9 | AC Input Undervoltage |  |  | Bit9 | AC Undervoltage Frequency Limit Protection Alarm;
+ | Bit10 | AC Input Overvoltage |  |  | Bit10 | N/A
+ | Bit11 | Input Voltage Sampling Failure |  |  | Bit11 | N/A
+ | Bit12 | DSP and PFC Communication Failure |  |  | Bit12 | N/A
+ | Bit13 | Board Radiator Temp. Sensor Failure |  |  | Bit13 | N/A
+ | Bit14 | DSP and Communicate Board Communication Failure |  |  | Bit14 | N/A
+ | Bit15 | Communication Failure with Motherboard |  |  | Bit15 | N/A
+
+Name | Bit | Status Valve
+System 2Driver Board Error Status 3 | Bit0 | IPM Module Overheat and Shutdown
+ | Bit1 | Compressor Missing Phase
+ | Bit2 | Compressor Overload
+ | Bit3 | Input Current Sampling Failure
+ | Bit4 | PIM Supply Voltage Failure
+ | Bit5 | Pre-charge Circuit Voltage Failure
+ | Bit6 | EEPROM Failure
+ | Bit7 | AC Input Overvoltage Failure
+ | Bit8 | Microelectronics Failure
+ | Bit9 | Compressor Type Code Failure
+ | Bit10 | Current Sampling Signal Overcurrent
+ | Bit11 | N/A
+ | Bit12 | N/A
+ | Bit13 | N/A
+ | Bit14 | N/A
+ | Bit15 | N/A
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+System 2Driver Board Error Status 1 | Bit0 | IPM Overcurrent/IPM Module Protection |  | System 2Driver Board Error Status 2 | Bit0 | Compressor Overcurrent Alarm
+ | Bit1 | Compressor Driver Failure |  |  | Bit1 | Compressor Weak Magnetic Protection Alarm
+ | Bit2 | Compressor Overcurrent |  |  | Bit2 | PIM Overheat Alarm
+ | Bit3 | Input Voltage Missing Phase |  |  | Bit3 | PFC Overheat Alarm
+ | Bit4 | IPM Current Sampling Failure |  |  | Bit4 | AC Input Overcurrent Alarm
+ | Bit5 | Power Component Overheating and Shutdown |  |  | Bit5 | EEPROM Error Alarm
+ | Bit6 | Pre-charge Failure |  |  | Bit6 | N/A
+ | Bit7 | DC Bus Overvoltage |  |  | Bit7 | EEPROM Refresh Complete
+ | Bit8 | DC Bus Undervoltage |  |  | Bit8 | Temperature Sensing Failure Limit
+ | Bit9 | AC Input Undervoltage |  |  | Bit9 | AC Undervoltage Frequency Limit Protection Alarm;
+ | Bit10 | AC Input Overvoltage |  |  | Bit10 | N/A
+ | Bit11 | Input Voltage Sampling Failure |  |  | Bit11 | N/A
+ | Bit12 | DSP and PFC Communication Failure |  |  | Bit12 | N/A
+ | Bit13 | Board Radiator Temp. Sensor Failure |  |  | Bit13 | N/A
+ | Bit14 | DSP and Communicate Board Communication Failure |  |  | Bit14 | N/A
+ | Bit15 | Communication Failure with Motherboard |  |  | Bit15 | N/A
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+Relay Status 1 0x0019(1: Load Enable)(0: Load Disable) | Bit0 | DHW Electric Heater |  | Relay Status 2 0x001A | Bit0 | Compressor 1
+ | Bit1 | Fan High Wind Level |  |  | Bit1 | Liquid Injection Valve 1
+ | Bit2 |  |  |  | Bit2 | EVI EEV 1
+ | Bit3 | Fan Low Wind Level |  |  | Bit3 | 4-Way Valve 1
+ | Bit4 | AC Electric Heater |  |  | Bit4 | Bypass Valve 1
+ | Bit5 | Underfloor Heating Electric Heater |  |  | Bit5 | Fan 1
+ | Bit6 | Bulit-in water pump |  |  | Bit6 | 
+ | Bit7 |  |  |  | Bit7 | 
+ | Bit8 |  |  |  | Bit8 | Secondary heating pumps
+ | Bit9 | Crankshaft Heater |  |  | Bit9 | 
+ | Bit10 | Chassis Heater |  |  | Bit10 | Compressor 2
+ | Bit11 | Return Water Valve/Pump |  |  | Bit11 | Liquid Injection Valve 2
+ | Bit12 |  |  |  | Bit12 | EVI EEV 2
+ | Bit13 |  |  |  | Bit13 | Compressor 2
+ | Bit14 | Heating & Cooling 3-way valve |  |  | Bit14 | Liquid Injection Valve 2
+ | Bit15 | Underfloor heating 3-way valve |  |  | Bit15 | 
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+Relay Status 3 | Bit0 |  |  | Relay Status 4 | Bit0 | Pipe electric heater 1
+ | Bit1 |  |  |  | Bit1 | Pipe electric heater 2
+ | Bit2 |  |  |  | Bit2 | Auxiliary Water Pump
+ | Bit3 |  |  |  | Bit3 | Zone 2 Water Pump
+ | Bit4 |  |  |  | Bit4 | Zone 1 Water Pump
+ | Bit5 |  |  |  | Bit5 | 
+ | Bit6 | Expansion tank electric heater |  |  | Bit6 | 
+ | Bit7 | Hot water heat source water pump |  |  | Bit7 | 
+ | Bit8 | Heating heat source water pumps |  |  | Bit8 | 
+ | Bit9 | AHS Signal output |  |  | Bit9 | 
+ | Bit10 |  |  |  | Bit10 | 
+ | Bit11 |  |  |  | Bit11 | 
+ | Bit12 |  |  |  | Bit12 | 
+ | Bit13 |  |  |  | Bit13 | 
+ | Bit14 |  |  |  | Bit14 | 
+ | Bit15 |  |  |  | Bit15 | 
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+Switch Status 1(1: Closed)(0: Opened) | Bit0 | SW1 |  | Switch Status 2 | Bit0 | 
+ | Bit1 | SW2 |  |  | Bit1 | 
+ | Bit2 | SW3 |  |  | Bit2 | 
+ | Bit3 | SW4 |  |  | Bit3 | 
+ | Bit4 | SW5 |  |  | Bit4 | 
+ | Bit5 | SW6 |  |  | Bit5 | 
+ | Bit6 | SW7 |  |  | Bit6 | 
+ | Bit7 | SW8 |  |  | Bit7 | High Pressure Switch 1
+ | Bit8 | Water Flow Switch |  |  | Bit8 | Low Pressure Switch 1
+ | Bit9 |  |  |  | Bit9 | Middle Pressure Switch 1
+ | Bit10 | Linkage Switch (Room Thermostat) |  |  | Bit10 | High Pressure Switch 2
+ | Bit11 | Linkage Switch (DHW AHS) |  |  | Bit11 | Low Pressure Switch 2
+ | Bit12 | Linkage Switch |  |  | Bit12 | Middle Pressure Switch 2
+ | Bit13 | Emergency Switch |  |  | Bit13 | 
+ | Bit14 |  |  |  | Bit14 | 
+ | Bit15 |  |  |  | Bit15 | 
+
+Name | Bit | Status Valve |  | Name | Bit | Status Valve
+Switch Status 3 | Bit0 |  |  | Switch Status 4 | Bit0 | 
+ | Bit1 |  |  |  | Bit1 | 
+ | Bit2 |  |  |  | Bit2 | 
+ | Bit3 |  |  |  | Bit3 | 
+ | Bit4 |  |  |  | Bit4 | 
+ | Bit5 | Linkage Switch (Buffer Tank AHS) |  |  | Bit5 | 
+ | Bit6 |  |  |  | Bit6 | 
+ | Bit7 |  |  |  | Bit7 | 
+ | Bit8 |  |  |  | Bit8 | 
+ | Bit9 |  |  |  | Bit9 | 
+ | Bit10 |  |  |  | Bit10 | 
+ | Bit11 |  |  |  | Bit11 | 
+ | Bit12 |  |  |  | Bit12 | 
+ | Bit13 |  |  |  | Bit13 | 
+ | Bit14 |  |  |  | Bit14 | 
+ | Bit15 |  |  |  | Bit15 | 
+
+3.Factory Parameter  0x0200~0x03FF
+Adress | Name | Address Ranges | Default Value | Read-Write
+0x0100 | T1 Ambient Temperature Sensor | 0~10 | RW | 0-Enable/1-Diasble
+0x0101 | High pressure switch setting | 0~10 | RW | 0-Enable/1-Diasble
+0x0102 | Low pressure switch setting | 0~10 | RW | 0-Enable/1-Diasble
+0x0103 | Water flow switch setting | 0~10 | RW | 0-Enable/1-Diasble
+0x0104 | Thermal overload protection switches setting | 0~10 | RW | 0-Enable/1-Diasble
+0x0105 | Linkage switch setting | 0~10 | RW | 0-Enable/1-Diasble /2-Thermostat 3-Heating thermostat
+0x0106 | Fan motor type setting | 0~10 | RW | 0-Enable/1-Diasble
+0x0107 | High pressure protection lockout setting | 0~10 | RW | 0-Enable/1-Diasble
+0x0108 | Low pressure protection lockout setting | 0~10 | RW | 0-Enable/1-Diasble
+0x0109 | Exhaust protection lockout setting | 0~10 | RW | 0-Enable/1-Diasble
+0x010A | Water flow switch protection lockout setting | 0~10 | RW | 0-Enable/1-Diasble
+0x010B | High pressure protection value | 40~150 | RW | C
+0x010C | High pressure frequency limit value | 40~150 | RW | C
+0x010D | Low pressure protection value | -50~-10 | RW | C
+0x010E | Low pressure frequency limit value | -50~-10 | RW | C
+0x010F | Exhaust temperature protection value | 100~130 | RW | C
+0x0110 | Exhaust temperature frequency limit value | 90~120 | RW | C
+0x0111 | Fan speed-up value-Cooling | 0~60 | RW | C
+0x0112 | Fan speed-down value-Cooling | 0~60 | RW | C
+0x0113 | Fan speed-down value-Heating | 0~60 | RW | C
+0x0114 | Fan speed-up value-Heating | 0~60 | RW | C
+0x0115 | Ambient temperature value- Unit no starting | -40~-10 | RW | C
+0x0116 | Ambient temperature value- Allow electric heater to start | -15~40 | RW | C
+0x0117 | Overprotection value- Inlet and outlet water temperature differential | 10~30 | RW | C
+0x0118 | Compensation value-Return water temperature | -10~10C | RW | C
+0x0119 | Compensation value-Outlet water temperature | -10~10C | RW | C
+0x011A | H&C return differential value | 0~10C | RW | C
+0x011B | Floor heating return differential value | 0~10C | RW | C
+0x011C | Water Pump Control-Unit shutdown when reaching temperature | 0~10 | RW | 0-Running /1-Stop /2-Running in cooling mode /3-Running in cooling/heating mode /4-Running in underfloor heating mode
+0x011D | Anti-freeze-water pump running time | 0~10 | RW | min
+0x011E | Defrost mode selection | 0~10 | RW | 0-Intelligent control /1-Timing control/ 2-Rapid control /3-Dew point control
+0x011F | Defrosting - cumulative runtime | 0~120 | RW | C
+0x0120 | Defrosting - coil temperature value | -30~0 | RW | C
+0x0121 | Defrosting - temperature differential 1 | 0~20 | RW | C
+0x0122 | Defrosting - temperature differential 2 | 0~20 | RW | C
+0x0123 | Maximum defrosting time | 0~30 | RW | C
+0x0124 | Exit defrosting - coil temperature | 0~30 | RW | C
+0x0125 | Shutdown mode - Reaching target temperature | 0~10 | RW | 0-Intelligent shutdown/1-Temperature shutdown /2-Cooling intelligent
+0x0126 | Opening degree constant - Heating main valve | -999~999 |  | 
+0x0127 | Pressure sensor setting | 0~10 | RW | 0-Enable/1-Diasble
+0x0128 | Correction value - Cooling target overheat | -5~10 | RW | C
+0x0129 | Correction value - Heating high voltage protection and frequency limiting | -10~10 | RW | C
+0x012A | Correction value - Heating target overheat | -5~10 | RW | C
+0x012B | Medium Pressure Switch Setting | 0~10 | RW | 0-Disable/1-Ensble
+0x012C | Water flow switch failure detection setting | 0~10 | RW | 0-Enable/1-Diasble
+0x012D | Communication address code | 1~16 | RW | 
+0x012E | Return differential - liquid injection solenoid valve opening | 0~15 | RW | C
+0x012F | EVI target overheat constant | 0~12 | RW | 
+0x0130 | Enable/Disable Hot Water Tank temperature sensor | 0~10 | RW | 0-Disable/1-Ensble
+0x0131 | Hot water frequency running percentage | 30~100 | RW | %
+0x0132 | Cooling - target frequency constants A | -100~100 | RW | 
+0x0133 | Cooling - minimum frequency limit | 15-60 | RW | Hz
+0x0134 | Cooling - target frequency upper limit | 40-120 | RW | Hz
+0x0135 | Cooling - target frequency lower limit | 15-120 | RW | Hz
+0x0136 | Heating - target frequency constant B | -100~100 | RW | 
+0x0137 | Heating - target frequency upper limit | 50-120 | RW | Hz
+0x0138 | Heating - target frequency lower limit | 20Hz-120 | RW | Hz
+0x0139 | Heating - minimum frequency1 | 15-60Hz | RW | Hz
+0x013A | Heating - minimum frequency2 | 15-60Hz | RW | Hz
+0x013B | Heating - minimum frequency3 | 15-60Hz | RW | Hz
+0x013C | Hot water - target frequency constants | -100~100 | RW | 
+0x013D | Hot water - target frequency upper limit | 50-120 | RW | Hz
+0x013E | Hot water - target frequency lower limit | 15-120 | RW | Hz
+0x013F | Hot water - minimum frequency 1 | 15-60 | RW | Hz
+0x0140 | Hot water - minimum frequency 2 | 15-60 | RW | Hz
+0x0141 | Hot water - minimum frequency 3 | 15-60 | RW | Hz
+0x0142 | DC fan - initial frequency | 20-60 | RW | Hz
+0x0143 | DC fan - heating minimum frequency | 20-60 | RW | Hz
+0x0144 | DC fan - heating max frequency | 20-80 | RW | Hz
+0x0145 | DC fan - cooling minimum frequency | 20-60 | RW | Hz
+0x0146 | DC fan - cooling maximum frequency | 20-80 | RW | Hz
+0x0147 | Compressor frequency - Allow auxiliary valve and EVI to open | 20-80z | RW | H
+0x0148 | Compressor frequency - Allow auxiliary valve and EVI to close | 20-80 | RW | Hz
+0x0149 | Cooling - main valve initial opening 1 | 20~480 | RW | P
+0x014A | Cooling - main valve initial opening 2 | 20~480 | RW | P
+0x014B | Cooling - main valve initial opening 3 | 20~480 | RW | P
+0x014C | Cooling - main valve minimum opening | 0~300 | RW | P
+0x014D | Heating - main valve minimum opening | 0~300 | RW | P
+0x014E | Main valve - maximum opening | 100~500 | RW | P
+0x014F | Main valve - initial opening constant c | 20~300 | RW | P
+0x0150 | Main valve - initial opening coefficient a | -999~999 | RW | 
+0x0151 | Main valve - initial opening coefficient b | -999~999 | RW | 
+0x0152 | Auxiliary valve - Maximum open degree | 100~500 | RW | P
+0x0153 | Auxiliary valve - Minimum open degree | 50~300 | RW | P
+0x0154 | Main valve - Adjustment period | 10-120 | RW | S
+0x0155 | Auxiliary valve - initial open degree c | -200~900 | RW | 
+0x0156 | Auxiliary valve - initial open degree a | -999~999 | RW | 
+0x0157 | Auxiliary valve - initial open degree b | -999~999 | RW | 
+0x0158 | Silent mode - compressor maximum frequency | 20-70 | RW | Hz
+0x0159 | Silent mode - fan motor maximum frequency | 20-60Hz | RW | Hz
+0x015A | Ambient temperature - Allow auxiliary and EVI to open | 0-45 | RW | C
+0x015B | Interval period - Allow auxiliary and EVI to open | 0-30 | RW | min
+0x015C | Temperature differential(T8-T7) - Allow auxiliary and EVI to open | 0-60 | RW | C
+0x015D | Compressor running time - Allow auxiliary and EVI to open | 0-20 | RW | min
+0x015E | Auxiliary valve adjustment cycle | 10-120 | RW | S
+0x015F | Cascade - water pump operation mode | 0-10 | RW | 0-Together control /1-Independent control
+0x0160 | DHW differential value | 0~10 | RW | C
+0x0161 | Water tank temperature automatic compensation | 0~10 | RW | 0-Enable/1-Diasble
+0x0162 | Water tank temperature manual compensation | -10~10 | RW | C
+0x0163 | Water pump speed regulation temperature differential | 2~10 | RW | C
+0x0164 | PWM pump minimum speed | 20~80 | RW | %
+0x0165 | Unit water pump control mode (host) | 0~10 | RW | 0-AC/1-DC
+0x0166 | Four-way valve control mode | 0~10 | RW | 0-Power on cooling/1- Power on heating
+0x0167 | Mode switching - unit minimum running time | 0~10 | RW | min
+0x0168 | Mode switching - Percentage of operating frequency | 20-100 | RW | %
+0x0169 | Cooling mode running - Minimum allowed ambient temperature | 10~60 | RW | C
+0x016A | Heating mode running - Maximum allowed ambient temperature | 10~60 | RW | C
+0x016B | Hot water mode running - highest ambient temperature | 10~60 | RW | C
+0x016C | Hot water set temperature - highest temperature | 30~80 | RW | C
+0x016D | Hot water set temperature - lowest temperature | 10~30 | RW | C
+0x016E | Heating set temperature - highest temperature | 30~80 | RW | C
+0x016F | Heating set temperature - lowest temperature | 15~30 | RW | C
+0x0170 | Cooling set temperature - highest temperature | 20~40 | RW | C
+0x0171 | Cooling set temperature - lowest temperature | 5~20 | RW | C
+0x0172 | Number of compressors to choose | 1~2 | RW | 
+0x0173 | Unit type selection | 0~10 | RW | 0-2-unit /1-3-unit
+0x0174 | Unit temperature control mode | 0~10 | RW | 0-Water Inlet Temp./1-Water Outlet Temp.
+0x0175 | Ambient temperature - Allow access to anti-freeze | 0~10 | RW | C
+0x0176 | Outlet water temperature - Allow access to anti-freeze | 0~20 | RW | C
+0x0177 | Refrigerant type | 0~20 | RW | 1-R410A/2-R32/3-R290
+0x0178 | Enable/Disable - Anti-condensation function | 0~10 | RW | 0-Enable/1-Diasble
+0x0179 | Low value - Heating frequency shield 1 | 0-120 | RW | Hz
+0x017A | High value - Heating frequency shield 1 | 0-120 | RW | Hz
+0x017B | Low value - Heating frequency shield 2 | 0-120 | RW | Hz
+0x017C | High value - Heating frequency shield 2 | 0-120 | RW | Hz
+0x017D | Low value - Heating frequency shield 3 | 0-120 | RW | Hz
+0x017E | High value - Heating frequency shield 3 | 0-120 | RW | Hz
+0x017F | Low value - Cooling frequency shield 1 | 0-120 | RW | Hz
+0x0180 | High value - Cooling frequency shield 1 | 0-120 | RW | Hz
+0x0181 | Low value - Cooling frequency shield 2 | 0-120 | RW | Hz
+0x0182 | High value - Cooling frequency shielding 2 | 0-120 | RW | Hz
+0x0183 | Low value - Cooling frequency shield 3 | 0-120 | RW | Hz
+0x0184 | High value - Cooling frequency shield 3 | 0-120 | RW | Hz
+0x0185 | Fan module | 0~10 | RW | 0-Integral/1-Individual
+0x0186 | Low protection value - Water flow rate | 0~100 | RW | L/min
+0x0187 | Temperature differential - Allow compressor to start (Valid, P120=1) | 0~50 | RW | C
+0x0188 | Ambient temperature - Allow throttling bypass valve to open | -20~50 | RW | C
+0x0189 | Compressor running time - Allow throttling bypass valve to open | 0~999 | RW | S
+0x018A | Compressor frequency - Allow defrosting | 40~120 | RW | Hz
+0x018B | Buffer tank electric heater | 0~10 | RW | 0-Enable/1-Disable/2-AHS
+0x018C | DHW electric heater | 0~10 | RW | 0-Enable/1-Disable/2-AHS
+0x018D | Dew point temperature duration - Allow defrosting | 0~60 | RW | min
+0x018E | Dew point constant - Allow defrosting | 0~60 | RW | 
+0x018F | Inlet water temperature - Allow defrosting | 0~60 | RW | C
+0x0190 | Ambient temperature - Allow defrosting | -20~30 | RW | C
+0x0191 | Antifreze protection value - heat exchanger | -20~10 | RW | C
+0x0192 | Water pump PWM - range setting value | 0~100 | RW | L/min
+0x0193 | Antifreeze mode - Cooling Coil | 0~10 | RW | 0-Low pressure /1-Temperature /2-Low pressure+ Temperature
+0x0194 | Antifreeze temperature - Cooling Coil | -30-10 | RW | C
+0x0195 | Limit frequency value - Overheat outlet temperature | 40-80 | RW | C
+0x0196 | Water pump - secondary heating/cooling system | 0~10 | RW | 0-Power on run/1-Power on/ 2- Linkage demand switch/ 3- Temperature control
+0x0197 | Return differential - Hot water heat source | 0-40 | RW | C
+0x0198 | Return differential - Heating heat source | 0-40 | RW | C
+0x0199 | Upper temperature limit - Hot water heat source combined temperature | 15-80 | RW | C
+0x019A | Upper temperature limit - Heating water heat source combined temperature | 15-80 | RW | C
+0x019B | Compressor code | 0~9999 | RW | 
+0x019C | ON/OFF - Auxiliary electronic expansion valve | 0~10 | RW | 0-Enable/1-Diasble
+0x019D | Auxiliary electronic expansion valve to reduce the temperature differential | 0~99 | RW | C
+0x019E | Ambient temperature - Heating Limit Outlet Temperature | -45~30 | RW | C
+0x019F | Temperature limit constant a | 0~150 | RW | 
+0x01A0 | Temperature limit coefficient b | -500~500 | RW | 
+0x01A1 | Auxiliary pump selection | 0~10 | RW | 0-DHW/1-Cooling/2-Underfloor heating/3-Heating&Cooling/4-Above all
+0x01A2 | Anti-freezing interval - Hot water pipes | 0~360 | RW | min
+0x01A3 | Water pump speed regulation - Minimum speed | 0~70 | RW | %
+0x01A4 | Level control | 0~10 | RW | 0-Enable/3-Disable
+0x01A5 | Load return differential | 1~15 | RW | C
+0x01A6 | Lightening back to the poor | 1~15 | RW | C
+0x01A7 | Stop back to the poor | 1~15 | RW | C
+0x01A8 | Hot water mode start ratio | 1~100 | RW | %
+0x01A9 | Non-hot water mode start ratio | 1~100 | RW | %
+0x01AA | Loading cycle | 3~60 | RW | min
+0x01AB | Ambient temperature - Shielded low voltage switch protection | -50~0 | RW | C
+0x01AC | DC fan target frequency constant c - heating | 40~70 | RW | HZ
+0x01AD | Fan minimum target frequency - heating | 20~65 | RW | Hz
+0x01AE | Main valve opening - defrost | 0~480 | RW | P
+0x01AF | Pump interval cycle - unit shutdown at constant temperature | 0~360 | RW | min
+0x01B0 | Compressor minimum running time - in defrosting | 0-999 | RW | S
+0x01B1 | Defrost frequency setting value - in different water temperature | 0~80 | RW | C
+0x01B2 | Defrosting frequency - High water temperature | 40~120Hz | RW | Hz
+0x01B3 | Target frequency - Power mode | 0~40Hz | RW | Hz
+0x01B4 | Target frequency upper limit- Power mode | 0~40 | RW | Hz
+0x01B5 | Defrost selection - Evaporate side | 0~2 | RW | 0-Current/1-Heating/2-DHW
+0x01B6 | Pipe electric heating option | 0~2 | RW | 0-3kW+6kW/ 1- 3kW/ 2-6kW/ 3-Disabled
+0x01B7 | Parameter password setting | 0~9999 | RW | 0-Diasble
+0x01B8 | D1 working condition compressor frequency | 0~120 | RW | HZ
+0x01B9 | C1 working condition compressor frequency | 0~120 | RW | HZ
+0x01BA | B1working condition compressor frequency | 0~120 | RW | HZ
+0x01BB | A1working condition compressor frequency | 0~120 | RW | HZ
+0x01BC | F1 working condition compressor frequency | 0~120 | RW | HZ
+0x01BD | D2 working condition compressor frequency | 0~120 | RW | HZ
+0x01BE | C2 working condition compressor frequency | 0~120 | RW | HZ
+0x01BF | B2 working condition compressor frequency | 0~120 | RW | HZ
+0x01C0 | A2 working condition compressor frequency | 0~120 | RW | HZ
+0x01C1 | F2 working condition compressor frequency | 0~120 | RW | HZ
+0x01C2 | D1 working condition fan frequency | 0~60 | RW | HZ
+0x01C3 | C1 working condition fan frequency | 0~60 | RW | HZ
+0x01C4 | B1 working condition fan frequency | 0~60 | RW | HZ
+0x01C5 | A1 working condition fan frequency | 0~60 | RW | HZ
+0x01C6 | F1 working condition fan frequency | 0~60 | RW | HZ
+0x01C7 | D2 working condition fan frequency | 0~60 | RW | HZ
+0x01C8 | C2 working condition fan frequency | 0~60 | RW | HZ
+0x01C9 | B2 working condition fan frequency | 0~60 | RW | HZ
+0x01CA | A2 working condition fan frequency | 0~60 | RW | HZ
+0x01CB | F2 working condition fan frequency | 0~60 | RW | HZ
+0x01CC | D1 working condition main valve target overheat | -10~10 | RW | C
+0x01CD | C1 working condition main valve target overheat | -10~10 | RW | C
+0x01CE | B1 working condition main valve target overheat | -10~10 | RW | C
+0x01CF | A1 working condition main valve target overheat | -10~10 | RW | C
+0x01D0 | F1 working condition main valve target overheat | -10~10 | RW | C
+0x01D1 | D2 working condition main valve target overheat | -10~10 | RW | C
+0x01D2 | C2 working condition main valve target overheat | -10~10 | RW | C
+0x01D3 | B2 working condition main valve target overheat | -10~10 | RW | C
+0x01D4 | A2 working condition main valve target overheat | -10~10 | RW | C
+0x01D5 | F2 working condition main valve target overheat | -10~10 | RW | C
+0x01D6 | Initial opening of main valve in D1 working condition | 0~500 | RW | P
+0x01D7 | Initial opening of main valve in C1 working condition | 0~500 | RW | P
+0x01D8 | Initial opening of main valve in B1 working condition | 0~500 | RW | P
+0x01D9 | Initial opening of main valve in A1 working condition | 0~500 | RW | P
+0x01DA | Initial opening of main valve in F1 working condition | 0~500 | RW | P
+0x01DB | Initial opening of main valve in D2 working condition | 0~500 | RW | P
+0x01DC | Initial opening of main valve in C2 working condition | 0~500 | RW | P
+0x01DD | Initial opening of main valve in B2 working condition | 0~500 | RW | P
+0x01DE | Initial opening of main valve in A2 working condition | 0~500 | RW | P
+0x01DF | Initial opening of main valve in F2 working condition | 0~500 | RW | P
+0x01E0 | D1 working condition auxiliary valve target overheat | -10~10 | RW | C
+0x01E1 | C1 working condition auxiliary valve target overheat | -10~10 | RW | C
+0x01E2 | B1 working condition auxiliary valve target overheat | -10~10 | RW | C
+0x01E3 | A1 working condition auxiliary valve target overheat | -10~10 | RW | C
+0x01E4 | F1 working condition auxiliary valve target overheat | -10~10 | RW | C
+0x01E5 | D2 working condition auxiliary valve target overheat | -10~10 | RW | C
+0x01E6 | C2 working condition auxiliary valve target overheat | -10~10 | RW | C
+0x01E7 | Auxiliary valve target overheats in B2 working condition | -10~10 | RW | C
+0x01E8 | Auxiliary valve target overheats in A2 working condition | -10~10 | RW | C
+0x01E9 | Auxiliary valve target overheats in F2 working condition | -10~10 | RW | C
+0x01EA | Initial opening of auxiliary valve in D1 working condition | 0~500 | RW | P
+0x01EB | Initial opening of auxiliary valve in C1 working condition | 0~500 | RW | P
+0x01EC | Initial opening of auxiliary valve in B1 working condition | 0~500 | RW | P
+0x01ED | Initial opening of auxiliary valve in A1 working condition | 0~500 | RW | P
+0x01EE | Initial opening of auxiliary valve in F1 working condition | 0~500 | RW | P
+0x01EF | Initial opening of auxiliary valve in D2 working condition | 0~500 | RW | P
+0x01F0 | Initial opening of auxiliary valve in C2 working condition | 0~500 | RW | P
+0x01F1 | Initial opening of auxiliary valve in B2 working condition | 0~500 | RW | P
+0x01F2 | Initial opening of auxiliary valve in A2 working condition | 0~500 | RW | P
+0x01F3 | Initial opening of auxiliary valve in F2 working condition | 0~500 | RW | P
+0x01F4 | Target water flow in low water temperature condition | 0~100 | RW | L/min
+0x01F5 | Target water flow under high water temperature conditions | 0~100 | RW | L/min
+0x01F6 | Low water temperature rated fan frequency | 0~60 | RW | Hz
+0x01F7 | Initial opening of main valve under low water temperature rated condition | 0~500 | RW | P
+0x01F8 | High water temperature rated fan frequency | 0~60 | RW | Hz
+0x01F9 | Initial opening of main valve under high water temperature rated condition | 0~500 | RW | P
+0x01FA | Target overheat of main valve under low water temperature rated condition | -10~10 | RW | C
+0x01FB | PFC shutdown current | 0~50 | RW | A
+0x01FC | Target overheat of main valve under high water temperature rated condition | -10~10 | RW | C
+0x01FD | PFC turn-on current | 0~50 | RW | A
+0x01FE | Heating medium | 0~1 | RW | 0-Water/1-Antifreeze Liquid
+0x01FF | Smart Grid Options - On/Off | 0~1 | RW | 0-Enable/1-Diasble
+0x0200 | Smart Grid Options - Peak grid running time | 30~999 | RW | min
+0x0201 | Dual temperature zone selection | 0~2 | RW | 1-Power on/2-Power on/off on demand/3-temperature control
+0x0202 | Mixed water regulating valve cycle | 5~20 | RW | min
+0x0203 | Mixing valve full cycle time | 0~180 | RW | S
+0x0204 | Maximum water pump speed | 50~99 | RW | %
+0x0205 | Water pump speed - at constant temperature | 20~99 | RW | %
+0x0206 | Testing mode - on/off | 0~1 | RW | 0-Enable/1-Diasble
+0x0207 | Frequency increase time - Exit exhaust overheat limit | 3~240 | RW | min
+0x0208 | Percentage correction for main valve opening - Running at initial frequency | 30~100 | RW | %
+0x0209 | Percentage of mixing valve adjustment |  |  | 
+0x020A | Dual temperature zone mode selection | 0~1 | RW | 0-Standard Dual Temperature Zone / 1-Intelligent Dual Temperature Zone
+0x020B | Dual temperature zone control return temperature | 0~30 | RW | C
+0x020C | Temperature selection after heat recover | 0~1 | RW | 0-Enable/1-Diasble
+
+User Parameter  0x0300~0x032F
+Adress | Name | Address Ranges | Default Value | Read-Write | Note
+0x0300 | Temp. Set-Cooling | 7-25 | 12 | RW | 
+0x0301 | Temp. Set-Heating | 20-60 | 55 | RW | 
+0x0302 | Temp. Set-Hot Water | 20-75 | 55 | RW | 
+0x0303 | Temp. Set-Floor Heating | 20-60 | 50 | RW | 
+0x0304 | Mode | 0-Cooling1-Heating2-DHW3-Floor Heating4-DHW + Cooling5-DHW + Heating6-Reserve7-DHW + Floor Heating |  | RW | 
+0x0305 | ON/OFF | 0-OFF/1-ON |  | RW | 
+0x0306 | Indoor Temperature Setting |  |  | RW | 
+0x0307 | User Functions | 0-Standard Mode1-Powerful Mode2-Silent mode |  | RW | 
+0x0308 | Reserve |  |  | RW | 
+0x0309 | Reserve |  |  | RW | 
+0x030A | Function Mode | Reserve |  | RW | 
+0x030B |  |  |  | RW | 
+0x030C | Heating/Underfloor Heating Curve Setting | High 8-bit: Underfloor heating curve |  | RW | 
+ |  | Low 8-bit: heating curve |  |  | 
+0x030D | Hot water/cooling curve setting | High 8-bit: cooling curve |  | RW | 
+ |  | Low 8-bit: hot water curve |  |  | 
+0x030E | Reserve |  |  | RW | 
+0x030F | Reserve |  |  | RW | 
+0x0310 | Reserve |  |  | RW | 
+0x0311 | Reserve |  |  | RW | 
+0x0312 | Reserve |  |  | RW | 
+0x0313 | Cooling Setting Curve | 0-811-18 | 0 | RW | Communication protocol >= 130 valid
+0x0314 | Heating Setting Curve | 0-811-18 | 0 | RW | Communication protocol >= 130 valid
+0x0315 | Hot Water Setting Curve | 0-4 | 0 | RW | Communication protocol >= 130 valid
+0x0316 | Underfloor Heating Setting Curve | 0-811-18 | 0 | RW | Communication protocol >= 130 valid
+0x0317 | Temp. Zone 2 |  |  |  | 
+0x0318 |  |  |  |  | 
+0x0319 | Temp. Zone 1 |  |  |  | 
+
+NOTE: 0-Disable/1-8High Temp. Curve 1-8/11/2-Low Temp. Curve 1-8
+5. User Commands  0x0330~0x035FUnit forced control, frequency/speed of forced control
+Adress | Name | Address Ranges | Default Value | Read-Write | Note
+0x0330 | Unit Control | Bit0 | 0 |  | RW | 
+ |  | Bit1 | 0 |  |  | 
+ |  | Bit2 | Quick Heat Mode |  |  | 
+ |  | Bit3 | Forced entry defrost |  |  | 
+ |  | Bit4 | System Evacuation Mode |  |  | 
+ |  | Bit5 | Refrigerant Recovery |  |  | 
+ |  | Bit6 | 0 |  |  | 
+ |  | Bit7 | 0 |  |  | 
+ |  | Bit8 | Forced sterilization |  |  | 
+ |  | Bit9 | 0 |  |  | 
+ |  | Bit10 | Allowed water return |  |  | 
+ |  | Bit11 | 0 |  |  | 
+ |  | Bit12 | 0 |  |  | 
+ |  | Bit13 | Restore Factory Defaults |  |  | 
+ |  | Bit14 | 0 |  |  | 
+ |  | Bit15 | 0 |  |  | 
+0x0331 | Load Forcing Control | Bit0 | Compressor Forced Control |  | RW | 
+ |  | Bit1 | EEV forced control |  |  | 
+ |  | Bit2 | EVI forced control |  |  | 
+ |  | Bit3 | Fan forced control |  |  | 
+ |  | Bit4 | 0 |  |  | 
+ |  | Bit5 | 0 |  |  | 
+ |  | Bit6 | 0 |  |  | 
+ |  | Bit7 | 0 |  |  | 
+ |  | Bit8 | 0 |  |  | 
+ |  | Bit9 | 0 |  |  | 
+ |  | Bit10 | 0 |  |  | 
+ |  | Bit11 | 0 |  |  | 
+ |  | Bit12 | 0 |  |  | 
+ |  | Bit13 | 0 |  |  | 
+ |  | Bit14 |  |  |  | 
+0x0332 | Compressor 1 forced frequency | 0-120Hz |  | RW | 
+0x0333 | Compressor 2 forced frequency | 0-120Hz |  | RW | 
+0x0334 |  | 0 |  | RW | 
+0x0335 |  | 0 |  | RW | 
+0x0336 | EEV 1 forced open | 0-500P |  | RW | 
+0x0337 | EEV 2 forced open | 0-500P |  | RW | 
+0x0338 |  | 0 |  | RW | 
+0x0339 |  | 0 |  | RW | 
+0x033A | EVI EEV 1 forced open | 0-500P |  | RW | 
+0x033B | EVI EEV 2 forced open | 0-500P |  | RW | 
+0x033C |  | 0 |  | RW | 
+0x033D |  | 0 |  | RW | 
+0x033E | Fan forced speed | 0-80Hz |  | RW | 
+0x033F |  | 0 |  | RW | 
+0x0340 |  | 0 |  | RW | 
+0x0341 |  | 0 |  | RW | 
+0x0342 |  | 0 |  | RW | 
+0x0343 | DC Pump Control | 0-Auto/1-Manual |  |  | 
+0x0344 | DC Pump Output | 0-100% |  |  | 
+0x0345 | PFC control | 0-Auto/1-Open/Close/2-Open |  |  | 
+0x0346 |  |  |  |  | 
+
+6. Version Information 0x0360~0x036F (Product Model,/Customized Version/Software Version)
+Adress | Name | Address Ranges | Default Value | Read-Write | Note
+0x0360 | Program Version | 100 |  | R | V1.0.
+0x0361 | Product Type | 0 |  | R | 
+0x0362 | Product Type ID Number | 1 |  | R | 
+0x0363 | Protocol Version | 100 |  | R | V1.0.0
+
+NOTE:
+Product Type:
+0-Commercial inverter unit/1-Domestic ON/OFF unit/2-Commercial ON/OFF unit
+Product Type ID Number
+0-Commercial inverter unit/0: Commercial inverter 2-unit/1- Commercial inverter 3-unit
+1-Domestic ON/OFF unit/0-Domestic inverter unit
+2-Commercial ON/OFF unit/0-Commercial inverter unit
+11.Fatory Parameter L  0x0800~0x083FParameter numbers start from L11; L0-L10 remain unchanged.
+Adress | Name | Address Ranges | Read-Write | Note
+0x0800 | Pipeline electric heater loading cycle | 1~300min | RW | 
+0x0801 | Sterilization | 0~2 | RW | 
+0x0802 | Days between Sterilizations | 5~30 Day | RW | 
+0x0803 | Sterilization Start-up Time | 00:00-24:00 | RW | 
+0x0804 | Sterilization Running Time | 0-50Min | RW | 
+0x0805 | Sterilization Temp Setting | 50-80C | RW | 
+0x0806 |  |  | RW | 
+0x0807 |  |  | RW | 
+0x0808 |  |  | RW | 
+0x0809 |  |  | RW | 
+0x080A |  |  | RW | 
+0x080B | DHW return water Setting | 0~10 | RW | 0-Disable / 1-Continuous return / 2-Cycle return / 3-Temperature difference return
+0x080C | Return Water Temp Setting | 20~65C | RW | 
+0x080D | Return Water Return Temp Differential | 1~15C | RW | 
+0x080E | Return Water Interval Period | 3~90min | RW | 
+0x080F | Return Water Running Period | 1~30min | RW | 
+0x0810 | Heating low temperature curve DIY | 0~1 | RW | 0-Enable /-Disable
+0x0811 | Heating low temperature curve coefficient k | 0~-50 | RW | Set temperature = k*(ambient temperature + 15) + b
+0x0812 | Heating low temperature curve constant b | 30~80 | RW | Set temperature = k*(ambient temperature + 15) + b
+0x0813 | Heating capacity statistics | 0~1 | RW | 0-Enable /-Disable
+0x0814 | External pump flow rate | 0~999 | RW | Unit: L/min
+0x0815 | Hot water electric heater power | 0~9999 | RW | Unit: W
+0x0816 | Pipe electric heater 1 power | 0~9999 | RW | Unit: W
+0x0817 | Pipe electric heater 2 power | 0~9999 | RW | Unit: W
+0x0818 | Heating electric heater power | 0~9999 | RW | Unit: W
+0x0819 | External water pump power | 0~9999 | RW | Unit: W
+0x081A |  |  |  | 
+11. Coil Address 0X1000-0X10FFAccess Command 01H, 05H
+Adress | Name | Address Ranges | Read-Write | Note
+0x1000 | Powerful Mode |  | RW | 
+0x1001 | Silent Mode |  | RW | 
+0x1002 | Reserve |  | RW | 
+0x1003 | Reserve |  | RW | 
+0x1004 | Reserve |  | RW | 
+0x1005 | Reserve |  | RW | 
+0x1006 | Reserve |  | RW | 
+0x1007 | Reserve |  | RW | 
+0x1008 | Reserve |  | RW | 
+0x1009 | Reserve |  | RW | 
+0x100A | Reserve |  | RW | 
+0x100B | Reserve |  | RW | 
+0x100C | Reserve |  | RW | 
+0x100D | Reserve |  | RW | 
+0x100E | Reserve |  | RW | 
+0x100F | Reserve |  | RW | 
+0x1010 | Reserve |  | RW | 
+0x1011 | Reserve |  | RW | 
+0x1012 | Quick Heat Mode |  | RW | 
+0x1013 | Force Enter Defrost |  | RW | 
+0x1014 | System Drain Mode |  | RW | 
+0x1015 | Refrigerant Recovery |  | RW | 
+0x1016 | Reserve |  | RW | 
+0x1017 | Reserve |  | RW | 
+0x1018 | Force SterilizationRestore factory defaults |  | RW | 
+0x1019 | Reserve |  | RW | 
+0x101A | Allow Return Water |  | RW | 
+0x101B | Reserve |  | RW | 
+0x101C | Reserve |  | RW | 
+0x101D | Restore Factory Setting |  | RW | 
+0x101E | Reserve |  | RW | 
+0x101F | Reserve |  | RW | 
+0x1020 | Compressor Forced Control |  | RW | 
+0x1021 | EEV Forced Control |  | RW | 
+0x1022 | EVI Forced Control |  | RW | 
+0x1023 | Fan Forced Control |  | RW | 
+0x1024 |  |  |  | 
+0x1025 |  |  |  | 
+0x1026 |  |  |  | 
+0x1027 |  |  |  | 
+0x1028 |  |  |  | 
+0x1029 |  |  |  | 
+0x102A |  |  |  | 
+0x102B |  |  |  | 
+0x102C |  |  |  | 
+0x102D |  |  |  | 
+0x102E |  |  |  | 
+0x102F |  |  |  | 
