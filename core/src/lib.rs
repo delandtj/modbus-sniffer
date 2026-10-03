@@ -514,7 +514,12 @@ pub struct Status {
     pub frames: u32,
     pub bad_crc: u32,
     pub uart_errors: u32,
+    /// Lines lost to the TCP consumer or refused by the ring: real gaps in the
+    /// server-side capture.
     pub dropped: u32,
+    /// Lines the USB consumer skipped. Grows constantly when no USB host is
+    /// reading (e.g. powered from a charger), so it is kept out of `dropped`.
+    pub usb_dropped: u32,
 }
 
 /// Format the reply to the `status` command.
@@ -540,8 +545,8 @@ pub fn format_status(status: &Status, out: &mut Line) -> Result<(), FormatError>
     }
     write!(
         out,
-        " frames={} bad_crc={} uart_errors={} dropped={}\r\n",
-        status.frames, status.bad_crc, status.uart_errors, status.dropped
+        " frames={} bad_crc={} uart_errors={} dropped={} usb_dropped={}\r\n",
+        status.frames, status.bad_crc, status.uart_errors, status.dropped, status.usb_dropped
     )
     .map_err(|_| FormatError)
 }
@@ -1145,6 +1150,7 @@ mod tests {
                 bad_crc: 1,
                 uart_errors: 2,
                 dropped: 3,
+                usb_dropped: 4,
             },
             &mut out,
         )
@@ -1152,7 +1158,7 @@ mod tests {
         assert_eq!(
             out.as_str(),
             "# status uptime_ms=123456 bus=9600 8E1 wifi=up ip=192.168.1.42 rssi=-57 \
-             frames=9 bad_crc=1 uart_errors=2 dropped=3\r\n"
+             frames=9 bad_crc=1 uart_errors=2 dropped=3 usb_dropped=4\r\n"
         );
     }
 
@@ -1173,6 +1179,7 @@ mod tests {
                 bad_crc: 0,
                 uart_errors: 0,
                 dropped: 0,
+                usb_dropped: 0,
             },
             &mut out,
         )
@@ -1180,7 +1187,7 @@ mod tests {
         assert_eq!(
             out.as_str(),
             "# status uptime_ms=0 bus=115200 8N2 wifi=down ip=? rssi=? \
-             frames=0 bad_crc=0 uart_errors=0 dropped=0\r\n"
+             frames=0 bad_crc=0 uart_errors=0 dropped=0 usb_dropped=0\r\n"
         );
     }
 

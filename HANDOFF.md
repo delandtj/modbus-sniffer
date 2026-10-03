@@ -108,10 +108,16 @@ ring - a cursor is just "the sequence number I want next". Consequences:
     parsed, before the pump gets to the marker. Not a bug.)
   - Boot line `# wifi disabled (no SNIFFER_WIFI_SSID at build time)` confirmed
     in the monitor capture.
-  - NOT verified on hardware: anything WiFi. The station config, DHCP, the
-    hello line, replay across a reconnect, the two-socket takeover and TCP
-    keepalive are COMPILE-VERIFIED ONLY. That is the first thing to test once
-    credentials exist.
+  - WiFi VERIFIED on hardware 2026-10-03 with the user's credentials (in the
+    git-ignored root .cargo/config.toml [env]): joins the AP (2.4 GHz only - the
+    C6 has no 5 GHz), DHCP lease 192.168.64.161, hostname `modbus-sniffer`
+    resolves on the LAN, rssi -59 dBm on the bench. Over TCP 4000: hello,
+    `status`, `note`, live frames, and replay (3 frames sent with no client
+    arrived on reconnect with their original uptime stamps). Two-socket
+    takeover and keepalive are still untested.
+  - `status` now reports `dropped=` (TCP consumer + ring refusals = real gaps
+    in the server capture) and `usb_dropped=` separately, because the USB
+    cursor falls behind forever when the board runs off a charger.
   - Left on the board: the default (non-selftest) build, bus 9600 8E1.
 - The embassy dependencies moved from git (embassy-rs/embassy main) to the
   equivalent crates.io releases. The versions matched exactly; the only source
@@ -209,8 +215,7 @@ Bus settings chosen by the user: 9600 8E1 - on the ESP32-C6 that is now the
 power-on default AND whatever the last `bus` command persisted. There is still no
 real Modbus bus to test against - hence the selftest feature.
 
-WiFi credentials were NOT available during the WiFi work, so everything on the
-radio side is compile-verified only.
+WiFi was verified on hardware after the WiFi work landed (see above).
 
 ## Build / test / flash recipes
 

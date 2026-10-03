@@ -213,7 +213,7 @@ Status and reply lines:
 | `# wifi disconnected` | lease lost (into the log) |
 | `# bus <baud> <fmt>` | the bus settings changed (into the log) |
 | `# note [secs.ms] <text>` | an operator note (into the log) |
-| `# status uptime_ms=<n> bus=<baud> <fmt> wifi=<up\|down> ip=<a.b.c.d\|?> rssi=<dBm\|?> frames=<n> bad_crc=<n> uart_errors=<n> dropped=<n>` | reply to `status`, to the requester only |
+| `# status uptime_ms=<n> bus=<baud> <fmt> wifi=<up\|down> ip=<a.b.c.d\|?> rssi=<dBm\|?> frames=<n> bad_crc=<n> uart_errors=<n> dropped=<n> usb_dropped=<n>` | reply to `status`, to the requester only |
 | `# ok <normalized command>` | reply to `bus` / `note`, to the requester only |
 | `# err <reason>` | rejected command, to the requester only |
 

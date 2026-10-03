@@ -141,9 +141,12 @@ static FRAMES: AtomicU32 = AtomicU32::new(0);
 static BAD_CRC: AtomicU32 = AtomicU32::new(0);
 /// UART receive errors (framing, parity, noise, overrun).
 static UART_ERRORS: AtomicU32 = AtomicU32::new(0);
-/// Lines reported lost in `[DROPPED n lines]` markers, summed over both
-/// consumers, plus lines the ring refused outright.
+/// Lines the TCP consumer had to skip, plus lines the ring refused outright:
+/// real gaps in the server-side capture.
 static DROPPED_LINES: AtomicU32 = AtomicU32::new(0);
+/// Lines the USB consumer had to skip. Kept separate because it grows forever
+/// when no USB host is reading (board powered from a charger in the field).
+static USB_DROPPED_LINES: AtomicU32 = AtomicU32::new(0);
 
 /// True while the stack holds a DHCP lease.
 pub static WIFI_UP: AtomicBool = AtomicBool::new(false);
@@ -164,7 +167,7 @@ pub fn current_bus() -> BusConfig {
     BUS.lock(|bus| bus.get())
 }
 
-/// Count lines a consumer had to skip past.
+/// Count lines the TCP consumer had to skip past.
 pub fn count_dropped_lines(missed: u64) {
     DROPPED_LINES.fetch_add(u32::try_from(missed).unwrap_or(u32::MAX), Ordering::Relaxed);
 }
@@ -272,7 +275,8 @@ async fn usb_tx_task(mut tx: UsbSerialJtagTx<'static, Async>) {
         let written = match out {
             Either::First(Chunk::Line(len)) => tx.write_all(&buf[..len]).await,
             Either::First(Chunk::Dropped(missed)) => {
-                count_dropped_lines(missed);
+                USB_DROPPED_LINES
+                    .fetch_add(u32::try_from(missed).unwrap_or(u32::MAX), Ordering::Relaxed);
                 if sniffer::format_dropped_lines(missed, &mut marker).is_ok() {
                     tx.write_all(marker.as_bytes()).await
                 } else {
@@ -407,6 +411,7 @@ async fn execute(text: &str) -> Line {
                 bad_crc: BAD_CRC.load(Ordering::Relaxed),
                 uart_errors: UART_ERRORS.load(Ordering::Relaxed),
                 dropped: DROPPED_LINES.load(Ordering::Relaxed),
+                usb_dropped: USB_DROPPED_LINES.load(Ordering::Relaxed),
             };
             if sniffer::format_status(&status, &mut reply).is_err() {
                 return reply_err("status line too long");
