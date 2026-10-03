@@ -42,8 +42,15 @@ unknown-function line formats, worst-case line length, the marker text, t3.5 at
   verified end-to-end on /dev/ttyACM0; default build flashed but its decode was
   never re-confirmed because of the USB hub incident below). The restructure has
   NOT been re-flashed.
-- ESP32-C6: NEW, compile-verified only in both build configs. Never flashed,
-  espflash has never been run, nothing has touched hardware.
+- ESP32-C6: selftest build VERIFIED on hardware 2026-10-03 (ESP32-C6 rev v0.2,
+  16MB flash, DevKitC-1 "USB" port). /dev/ttyACM0 shows the three canned frames
+  with correct decode, both OK and BAD_CRC. The DROPPED path was also seen for
+  real: with no reader attached the USB writes stall, the 8-deep channel fills
+  and "[DROPPED 4 frames]" appeared inline once a reader reattached. The
+  default (real sniffer) build has not been flashed or run against a bus.
+  Gotcha: right after `espflash flash` (no --monitor) the app produced nothing
+  until `espflash monitor` reset the chip; `cargo run --release` (which uses
+  --monitor) avoids this, or press RESET.
 - The embassy dependencies moved from git (embassy-rs/embassy main) to the
   equivalent crates.io releases. The versions matched exactly; the only source
   change needed was the RCC enum variant casing (`PllSource::HSE`,
@@ -243,10 +250,8 @@ handling; the task structure.
 
 Needs hardware, in order:
 
-1. ESP32-C6: wire the module to GPIO4, flash the `selftest` build over the "USB"
-   port, confirm /dev/ttyACM0 shows the three canned frames with correct decode
-   and both the OK and BAD_CRC branches. Then flash the default build and check
-   real traffic.
+1. ESP32-C6: (selftest DONE 2026-10-03.) Wire the module to GPIO4, flash the
+   default build and check real traffic once a Modbus bus is available.
 2. ESP32-C6: confirm the UART framing choices on real traffic - the 2-symbol
    hardware RX idle timeout and the 32-byte FIFO threshold are reasoned about but
    not measured.
