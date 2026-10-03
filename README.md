@@ -360,11 +360,9 @@ the mapping workflow.
 
 ## Heat pump documentation
 
-`docs/` holds what is known about the target bus (a WFI-028T/035T pool heat pump
-and its wired controller): `register-map.md` is the working register map built
-from captures and is the spec for a replacement controller; the vendor manual,
-the WFI Modbus sheet and a generic factory protocol document are kept next to it
-with plain-text extractions for searching.
+The heat pump this was built for (WFI-028T/035T) is documented in the sibling
+project `../wfi028t-controller`: register map, vendor documents and the design
+for a replacement controller.
 
 ## Scope
 

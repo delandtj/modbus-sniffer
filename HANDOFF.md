@@ -1,6 +1,28 @@
 # Handoff: modbus-sniffer
 
-Last updated: 2026-10-03
+Last updated: 2026-10-03 (end of the sniffer phase)
+
+## Status: done and in service - work continues in ../wfi028t-controller
+
+The sniffer did its job: the ESP32-C6 sits in the poolhouse with needle taps on
+the heat pump controller cable (green/yellow, module A/B swapped at its screw
+terminals), on WiFi as `modbus-sniffer` (192.168.64.161, rssi about -40), bus
+settings persisted at **9600 8N1**. The capture service runs on the user's
+always-on PC (systemd `modbus-sniffer-capture`, binaries in /usr/local/bin,
+logs in /var/lib/modbus-sniffer, user `modbus-sniffer`, the user is in its
+group). The real capture starts at the note "CAPTURE START real bus"
+(2026-10-03 14:51); earlier lines in that day's log are bench tests.
+
+The bus was mapped (poll cycle, whole-block writes, on/off/mode/boost/P01-P05,
+all A01-A14 sensors, several status bits). That work, the register map, the
+vendor documents, the ADR for a Rust replacement controller and the FTDI bench
+script now live in the sibling project **../wfi028t-controller** (own git
+repo). That project integrates the sniffer's functions (core crate, WiFi, LED,
+settings, TCP capture stream) into the controller firmware; this repo stays the
+receive-only tool and the home of the capture tools.
+
+Leave the sniffer and the capture service running: the multi-day capture is
+still needed for defrost, target-reached and fault bits.
 
 ## What this is
 
@@ -27,8 +49,9 @@ fw-esp32c6/             sniffer-esp32c6     - ESP32-C6-DevKitC-1 (WROOM-1)
   src/settings.rs       bus settings record in the nvs partition
 ```
 
-There is NO `.cargo/config.toml` at the workspace root - that is deliberate, so
-`cargo test -p modbus-sniffer-core` from the root runs on the host. Each firmware
+The root `.cargo/config.toml` is git-ignored and holds ONLY `[env]` (the WiFi
+credentials `SNIFFER_WIFI_SSID` / `SNIFFER_WIFI_PASS`); it sets no build target,
+so `cargo test -p modbus-sniffer-core` from the root still runs on the host. Each firmware
 crate has its own `.cargo/config.toml` with its target and runner, so you build
 and flash from inside that directory.
 
@@ -439,9 +462,44 @@ USB via M=25/N=192/Q=4 - M=25 is forced for exact USB from a 25 MHz crystal, NOT
 a smell); `vbus_detection = false`; the CRC-16; the ZLP-on-64-multiple flush
 handling; the task structure.
 
+## Log compaction (design, not built)
+
+Measured 2026-10-03 on the real bus: ~346k lines and ~108 MiB per day,
+because the controller polls the same two blocks every second. Over 600 polls
+the settings response was identical to the previous one 599 times; the status
+response 333 times, and most of the remaining changes came from three jittery
+registers (0x001b compressor Hz +/-1, 0x001e DC bus volts, 0x0024 fan rpm).
+A rotated day gzips about 35x (~3 MiB).
+
+Proposal, in `sniffer-capture` (host side, so the device and the raw stream
+stay simple):
+
+- `--compact` writes a second daily file next to the raw one (or replaces it):
+  - always: notes, status/hello/CAPTURE lines, every non-poll frame (writes,
+    acks, exceptions, unknown functions), BAD_CRC/SHORT frames, DROPPED
+    markers;
+  - poll requests that repeat the previous identical request: dropped;
+  - poll responses: written only when they differ from the last WRITTEN
+    response for that request, ignoring changes within a per-register
+    deadband (default 0; configure e.g. 0x001b:1, 0x001e:5, 0x0024:15);
+  - a full snapshot of every polled block every N minutes (default 5) and a
+    liveness line `POLL <slave> <start>x<count> n=<cycles> unchanged` so gaps
+    remain visible.
+- Raw logs: gzip at rotation, keep N days (default 14) for re-analysis.
+- `sniffer-analyze` must accept compact logs: a response that is absent means
+  "unchanged"; poll-period statistics come from the POLL counters.
+
+Expected result: well under 10k lines per day.
+
 ## Next steps
 
-Needs hardware, in order:
+The controller work is in ../wfi028t-controller. Here:
+
+0. Log compaction (above).
+
+Needs hardware, in order (items 1-2 largely DONE 2026-10-03: WiFi, hostname,
+TCP, replay, commands and a real bus all verified; takeover and AP power loss
+not yet):
 
 1. **ESP32-C6 WiFi, the big one.** Build with real credentials
    (`SNIFFER_WIFI_SSID=... SNIFFER_WIFI_PASS=... cargo run --release`) and check,
