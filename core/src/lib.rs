@@ -124,6 +124,26 @@ pub fn format_function(code: u8) -> &'static str {
     }
 }
 
+/// Bit set in the function code of an exception response (e.g. 0x83 answers 0x03).
+pub const EXCEPTION_FLAG: u8 = 0x80;
+
+/// Human-readable name for Modbus exception codes (the single data byte of an
+/// exception response).
+pub fn format_exception(code: u8) -> &'static str {
+    match code {
+        0x01 => "Illegal Function",
+        0x02 => "Illegal Data Address",
+        0x03 => "Illegal Data Value",
+        0x04 => "Server Device Failure",
+        0x05 => "Acknowledge",
+        0x06 => "Server Device Busy",
+        0x08 => "Memory Parity Error",
+        0x0A => "Gateway Path Unavailable",
+        0x0B => "Gateway Target Device Failed to Respond",
+        _ => "Unknown",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Enqueue
 // ---------------------------------------------------------------------------
@@ -202,12 +222,27 @@ pub fn format_frame(frame: &Frame, out: &mut Line) -> Result<(), FormatError> {
 
     write!(
         out,
-        "[{secs}.{ms:03}] RX slave=0x{slave:02x} func=0x{function:02x} ({})",
-        format_function(function)
+        "[{secs}.{ms:03}] RX slave=0x{slave:02x} func=0x{function:02x} "
     )
     .map_err(|_| FormatError)?;
 
-    if !body.is_empty() {
+    if function & EXCEPTION_FLAG != 0 {
+        write!(
+            out,
+            "(Exception: {})",
+            format_function(function & !EXCEPTION_FLAG)
+        )
+        .map_err(|_| FormatError)?;
+    } else {
+        write!(out, "({})", format_function(function)).map_err(|_| FormatError)?;
+    }
+
+    if function & EXCEPTION_FLAG != 0 && body.len() == 1 {
+        // A well-formed exception response carries exactly one exception code.
+        let code = body[0];
+        write!(out, " exception=0x{code:02x} ({})", format_exception(code))
+            .map_err(|_| FormatError)?;
+    } else if !body.is_empty() {
         out.push_str(" data=").map_err(|_| FormatError)?;
         for (i, b) in body.iter().enumerate() {
             if i > 0 {
@@ -335,8 +370,33 @@ mod tests {
 
     #[test]
     fn format_frame_unknown_function() {
+        let f = frame(&build_frame(&[0x01, 0x42, 0x02]), 0);
+        assert!(line_of(&f).contains("func=0x42 (Unknown) data=02 crc="));
+    }
+
+    #[test]
+    fn format_frame_exception_response() {
         let f = frame(&build_frame(&[0x01, 0x83, 0x02]), 0);
-        assert!(line_of(&f).contains("func=0x83 (Unknown)"));
+        assert_eq!(
+            line_of(&f).as_str(),
+            "[0.000] RX slave=0x01 func=0x83 (Exception: Read Holding Registers) \
+             exception=0x02 (Illegal Data Address) crc=0xf1c0 computed=0xf1c0 OK\r\n"
+        );
+    }
+
+    #[test]
+    fn format_frame_exception_unknown_code_and_function() {
+        let f = frame(&build_frame(&[0x07, 0xc2, 0x77]), 0);
+        assert!(
+            line_of(&f).contains("func=0xc2 (Exception: Unknown) exception=0x77 (Unknown) crc=")
+        );
+    }
+
+    #[test]
+    fn format_frame_malformed_exception_falls_back_to_hex() {
+        // Exception flag set but two body bytes: not a valid exception PDU.
+        let f = frame(&build_frame(&[0x01, 0x83, 0x02, 0x03]), 0);
+        assert!(line_of(&f).contains("(Exception: Read Holding Registers) data=02 03 crc="));
     }
 
     #[test]
