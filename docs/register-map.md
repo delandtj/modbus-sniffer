@@ -52,17 +52,24 @@ master is used ("If adopt Modbus, the controller should be unplug to the PCB").
 
 ## Confirmed
 
+0x003f is the main bit-field register: bit 0 on/off, bit 4 P05, bit 6 ECO/boost.
+Setpoints in the settings block are whole degrees (unlike the sensors).
+
 | Register | Bits / values | Meaning | Evidence |
 |---|---|---|---|
 | 0x003f | bit 0 | 1 = unit on, 0 = off | WFI sheet; capture shows 1 while running (OFF not yet captured) |
 | 0x003f | bit 6 | 1 = normal/ECO, 0 = full power (BOOST) | capture 14:52:47-14:53:53, four toggles; WFI sheet says boost is 0x0040 bit 4, which did NOT change |
 | 0x0040 | value | 1 = heating, 2 = cooling, 7 = auto | WFI sheet; capture shows 1 while in heating |
 | 0x0004 | bit 7 | set while full power is active (heat pump's confirmation) | capture, follows every 0x003f bit 6 toggle |
+| 0x003f | bit 4 | P05: 1 = stop once target reached, 0 = non stop | capture 15:50:45-15:50:57, toggled via the P menu |
+| 0x0041 | whole C | P01 heating setpoint (unit was at 33) | capture 15:49 |
+| 0x0042 | whole C | P02 cooling setpoint | capture 15:50 |
+| 0x004a | whole C | P03 auto setpoint | capture 15:50 |
+| 0x004d | whole C | P04 restart hysteresis | capture 15:50 |
 
 ## Candidates (unverified)
 
-- 0x0042 = 27: matches P01 (heating setpoint) factory default 27 C. Verify by
-  changing the setpoint. Note: settings may use yet another scaling.
+- (P01-P05 now confirmed; 0x0042 turned out to be P02, not P01.)
 - The live sensors are mapped (see "Sensors" under the ESPHome target).
 
 ## Target: ESPHome replacement controller
@@ -80,11 +87,11 @@ Update a row when its register is confirmed.
 | Power | `switch` | 0x003f bit 0 | confirmed on (=1); off not yet captured |
 | Mode: heating / cooling / auto | `select` | 0x0040 (1 / 2 / 7) | confirmed for heating (1) |
 | Boost (full power) vs ECO | `switch` | 0x003f bit 6, inverted (0 = boost) | confirmed |
-| Heating setpoint P01 (8-40 C) | `number` | 0x0042? (27 = factory default) | likely |
-| Cooling setpoint P02 (8-28 C) | `number` | settings block | to map |
-| Auto setpoint P03 (8-40 C) | `number` | settings block | to map |
-| Restart hysteresis P04 (1-18 C) | `number` | settings block | to map |
-| Stop at target P05 (0 = non stop, 1 = stop) | `switch` | settings block | to map |
+| Heating setpoint P01 (8-40 C) | `number` | 0x0041, whole degrees | confirmed (33->34->33) |
+| Cooling setpoint P02 (8-28 C) | `number` | 0x0042, whole degrees | confirmed (27->28->27) |
+| Auto setpoint P03 (8-40 C) | `number` | 0x004a, whole degrees | confirmed (27->28->27) |
+| Restart hysteresis P04 (1-18 C) | `number` | 0x004d, whole degrees | confirmed (1->2->1) |
+| Stop at target P05 (0 = non stop, 1 = stop) | `switch` | 0x003f bit 4 (1 = stop) | confirmed (several toggles) |
 | Manual defrost | `button` | unknown, maybe a command bit | to map (may not exist on the bus) |
 
 ### Sensors (manual A01-A14, "Parameter checking" menu)
@@ -165,8 +172,8 @@ WiFi icon (Tuya module, no longer relevant).
 
 ## Open questions
 
-- Setpoints P01-P05, timers, clock, auto mode: change each on the controller
-  with a note, then diff the settings block.
+- Timers, clock, auto mode: change each on the controller with a note, then
+  diff the settings block (P01-P05 are done).
 - On/off: capture a power-off to confirm 0x003f bit 0.
 - Error/fault bits: wait for a real fault or defrost (multi-day capture).
 - Does the PCB also answer the generic protocol (version at 0x0360-0x0363,
