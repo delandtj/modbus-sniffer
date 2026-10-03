@@ -1,0 +1,13 @@
+[package]
+name = "modbus-sniffer-core"
+version = "0.1.0"
+edition = "2021"
+description = "Board-independent Modbus RTU framing, CRC and line formatting for the sniffer firmwares"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+embassy-sync = "0.8.0"
+heapless = "0.8.0"
+
+[dev-dependencies]
+critical-section = { version = "1", features = ["std"] }
