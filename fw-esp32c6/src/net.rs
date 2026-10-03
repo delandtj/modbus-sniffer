@@ -243,7 +243,9 @@ async fn tcp_task(stack: Stack<'static>) {
         }
         already_connected = false;
 
+        crate::led::set_client_connected(true);
         serve_client(active, idle, &mut cursor).await;
+        crate::led::set_client_connected(false);
 
         // abort() rather than close(): a RST frees the socket immediately
         // instead of parking it in TIME_WAIT, and we may need it again at once.

@@ -65,6 +65,7 @@ use esp_backtrace as _;
 use modbus_sniffer_core as sniffer;
 use sniffer::{BusConfig, Chunk, Command, Line, Marker, SnifferBus};
 
+mod led;
 mod net;
 mod settings;
 
@@ -188,6 +189,10 @@ fn publish_frame(buf: &[u8], timestamp_ms: u64) {
         BAD_CRC.fetch_add(1, Ordering::Relaxed);
     }
 
+    // Blink before the formatting, so a frame that is too long to format still
+    // shows up on the LED. Setting a flag is all this does.
+    led::flash(!frame.crc_ok);
+
     let mut line = Line::new();
     if sniffer::format_frame(&frame, &mut line).is_err() {
         // Line buffer too small for this frame: count it as lost rather than
@@ -231,18 +236,24 @@ async fn main(spawner: Spawner) {
     let bus = settings::init(peripherals.FLASH).await;
     BUS.lock(|current| current.set(bus));
 
+    // The status LED first, so the board shows something while the radio comes
+    // up. It owns RMT TX channel 0 and GPIO8 from here on.
+    led::start(&spawner, peripherals.RMT, peripherals.GPIO8);
+
     let (usb_rx, usb_tx) = UsbSerialJtag::new(peripherals.USB_DEVICE)
         .into_async()
         .split();
     spawner.spawn(usb_tx_task(usb_tx).unwrap());
     spawner.spawn(usb_rx_task(usb_rx).unwrap());
 
-    match WIFI_SSID {
-        Some(ssid) => {
-            net::start(&spawner, peripherals.WIFI, ssid, WIFI_PASS.unwrap_or(""));
+    let wifi_available = match WIFI_SSID {
+        Some(ssid) => net::start(&spawner, peripherals.WIFI, ssid, WIFI_PASS.unwrap_or("")),
+        None => {
+            publish_text("# wifi disabled (no SNIFFER_WIFI_SSID at build time)\r\n");
+            false
         }
-        None => publish_text("# wifi disabled (no SNIFFER_WIFI_SSID at build time)\r\n"),
-    }
+    };
+    led::set_wifi_available(wifi_available);
 
     #[cfg(not(feature = "selftest"))]
     spawner.spawn(sniffer_task(peripherals.UART1, peripherals.GPIO4, bus).unwrap());
@@ -549,6 +560,7 @@ async fn frame_receiver(uart: &mut Uart<'static, Async>, bus: BusConfig) -> BusC
                 // UART error (framing/noise/parity/overflow). Flush the partial
                 // frame if any, matching the STM32 firmware exactly.
                 UART_ERRORS.fetch_add(1, Ordering::Relaxed);
+                led::flash(true);
                 if !buf.is_empty() {
                     publish_frame(&buf, Instant::now().as_millis());
                     buf.clear();

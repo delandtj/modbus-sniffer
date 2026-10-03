@@ -1131,6 +1131,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp-hal-smartled"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5315ad80e19e70920e282676e56fec5fb2115c36c9f9fbe14b154148ba761743"
+dependencies = [
+ "document-features",
+ "esp-hal",
+ "num-traits",
+ "smart-leds-trait",
+ "thiserror",
+]
+
+[[package]]
 name = "esp-metadata-generated"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1985,6 +1998,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "rgb"
+version = "0.8.53"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
+
+[[package]]
 name = "riscv"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2208,6 +2227,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
+name = "smart-leds"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66df34e571fa9993fa6f99131a374d58ca3d694b75f9baac93458fe0d6057bf0"
+dependencies = [
+ "smart-leds-trait",
+]
+
+[[package]]
+name = "smart-leds-trait"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7f4441a131924d58da6b83a7ad765c460e64630cce504376c3a87a2558c487f"
+dependencies = [
+ "rgb",
+]
+
+[[package]]
 name = "smoltcp"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2234,6 +2271,7 @@ dependencies = [
  "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",
+ "esp-hal-smartled",
  "esp-println",
  "esp-radio",
  "esp-rtos",
@@ -2241,6 +2279,7 @@ dependencies = [
  "heapless 0.8.0",
  "heapless 0.9.3",
  "modbus-sniffer-core",
+ "smart-leds",
  "static_cell",
 ]
 

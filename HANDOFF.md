@@ -23,6 +23,7 @@ fw-stm32f411/           sniffer-stm32f411   - STM32F411CEU6 Black Pill
 fw-esp32c6/             sniffer-esp32c6     - ESP32-C6-DevKitC-1 (WROOM-1)
   src/main.rs           init, line producer, USB consumer + commands, sniffer
   src/net.rs            WiFi station, DHCP, TCP line server on port 4000
+  src/led.rs            RGB status LED, GPIO8 over RMT TX channel 0
   src/settings.rs       bus settings record in the nvs partition
 ```
 
@@ -119,6 +120,19 @@ ring - a cursor is just "the sequence number I want next". Consequences:
     in the server capture) and `usb_dropped=` separately, because the USB
     cursor falls behind forever when the board runs off a charger.
   - Left on the board: the default (non-selftest) build, bus 9600 8E1.
+- Status LED (`fw-esp32c6/src/led.rs`, 2026-10-03): the DevKitC-1's on-board
+  WS2812-type RGB LED on GPIO8, driven with `esp-hal-smartled` 0.18 (the first
+  release that takes esp-hal `~1.2`) on RMT TX channel 0 in async mode. Blue
+  blink = not associated, dim amber = WiFi up with no TCP client, dim green =
+  client connected, dim cyan = no WiFi in this build or the radio refused;
+  bright-green flash per good frame, bright red for BAD_CRC/SHORT/UART errors,
+  rate-limited to one 35 ms flash per 80 ms. All steady colours derive from one
+  `DIM` const (~8%). Producers only do `fetch_or` + `Signal::signal`; the one
+  `led_task` is the only code that touches RMT, so the capture, USB and TCP
+  paths cannot be slowed by the LED, and if the RMT setup fails the task just
+  returns. Deliberately NOT hooked into the panic path - esp-backtrace owns the
+  panic handler and its message on /dev/ttyACM0 is worth more than a red LED.
+  Colour table is in the README.
 - The embassy dependencies moved from git (embassy-rs/embassy main) to the
   equivalent crates.io releases. The versions matched exactly; the only source
   change needed was the RCC enum variant casing (`PllSource::HSE`,

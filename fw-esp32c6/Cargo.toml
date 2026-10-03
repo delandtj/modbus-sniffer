@@ -18,6 +18,7 @@ esp-alloc = { version = "0.11", features = ["esp32c6"] }
 esp-backtrace = { version = "0.20.0", features = ["esp32c6", "panic-handler", "println"] }
 esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c6"] }
 esp-hal = { version = "1.2.2", features = ["esp32c6", "unstable"] }
+esp-hal-smartled = { version = "0.18.0", features = ["esp32c6"] }
 esp-println = { version = "0.18", default-features = false, features = ["critical-section", "esp32c6", "jtag-serial"] }
 esp-radio = { version = "1.0.0-beta.1", default-features = false, features = ["esp32c6", "wifi", "esp-alloc", "unstable"] }
 esp-rtos = { version = "0.4.0", features = ["esp32c6", "embassy", "esp-radio", "esp-alloc"] }
@@ -25,4 +26,5 @@ esp-storage = { version = "0.10", features = ["esp32c6"] }
 heapless = "0.8.0"
 heapless09 = { version = "0.9", package = "heapless", default-features = false }
 modbus-sniffer-core = { version = "0.1.0", path = "../core" }
+smart-leds = "0.4.0"
 static_cell = "2"

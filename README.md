@@ -23,6 +23,8 @@ unattended multi-day capture with a Linux box doing the logging.
 - Sends one line per frame to every attached output.
 - Counts lines and frames it had to drop, and says so inline rather than lying by
   omission.
+- On the ESP32-C6, shows link, client and traffic state on the board's RGB LED, so an
+  unattended board can be read from across the room ([status LED](#status-led)).
 
 Example output:
 
@@ -49,6 +51,7 @@ Example output:
 |   |-- .cargo/config.toml  riscv32imac-unknown-none-elf, espflash runner
 |   |-- src/main.rs         init, line producer, USB consumer, commands
 |   |-- src/net.rs          WiFi station, DHCP, TCP line server
+|   |-- src/led.rs          RGB status LED on GPIO8 over RMT
 |   \-- src/settings.rs     bus settings in the nvs partition
 \-- tools/                  modbus-sniffer-tools: host crate, see tools/README.md
     |-- src/bin/            sniffer-capture, sniffer-analyze, fake-device
@@ -190,6 +193,37 @@ nc modbus-sniffer 4000
 to sit somewhere inconvenient for days; a fixed address means the logger's
 reconnect loop never has to rediscover it, and the hostname keeps working even on
 networks whose DHCP server does not register names in DNS.
+
+### Status LED
+
+The DevKitC-1's on-board addressable RGB LED (WS2812-type, data on **GPIO8**) is the
+whole status display: it says whether the board is on the network, whether the
+capture daemon is connected, and whether frames are coming in. It is driven over
+**RMT TX channel 0** by a dedicated task; the capture, USB and TCP paths only ever
+set an atomic, so the LED can never slow them down.
+
+| LED | Meaning |
+|---|---|
+| blue blink, ~2 Hz | booting, or WiFi not associated / reconnecting |
+| steady dim amber | WiFi up, no capture client on TCP 4000 |
+| steady dim green | WiFi up, a TCP client is connected |
+| steady dim cyan | WiFi not in this build (no `SNIFFER_WIFI_SSID`), or the radio refused to start |
+| bright green flash | a frame was captured and its CRC is good |
+| bright red flash | `BAD_CRC` or `SHORT` frame, or a UART receive error |
+
+Steady colours run at ~8% brightness (one `DIM` constant in `fw-esp32c6/src/led.rs`)
+so the board is readable in a dark room without glare; flashes are brighter and last
+35 ms. Flashes are rate-limited to one per 80 ms, so a busy bus shows as a steady
+flicker rather than a solid colour - the LED tells you *that* there is traffic, not
+how much. A `--features selftest` build flashes on its injected frames too, which
+makes it the quickest way to check the LED without a bus.
+
+Panics do **not** turn the LED red. The panic handler belongs to esp-backtrace and
+the RMT channel belongs to the LED task; taking the handler over to repaint the LED
+would cost the panic message and backtrace on /dev/ttyACM0, which are worth more.
+
+GPIO8 is a strapping pin, but it is only sampled at reset, so the firmware driving
+it afterwards is harmless - it is what the board wires the LED to.
 
 ## Protocol
 
