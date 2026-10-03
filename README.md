@@ -1,125 +1,184 @@
-# STM32 Black Pill Modbus RTU Sniffer
+# Modbus RTU Sniffer
 
-A small Rust/Embassy firmware for the STM32F411CEU6 "Black Pill" that listens to an RS-485 bus and streams decoded Modbus RTU frames over USB-CDC.
+Rust/Embassy firmware that listens passively to an RS-485 bus, decodes Modbus RTU
+frames and streams one human-readable line per frame out of the board's native USB
+port as a virtual serial device. Two boards are supported from one workspace:
+
+| Crate | Board | Input | Output |
+|---|---|---|---|
+| `fw-stm32f411` | STM32F411CEU6 "Black Pill" | USART2 RX on PA3 | USB CDC-ACM (PA11/PA12) |
+| `fw-esp32c6` | ESP32-C6-DevKitC-1 (WROOM-1) | UART1 RX on GPIO4 | built-in USB-Serial-JTAG |
+
+Both produce byte-identical output, because the framing, CRC and formatting live in
+a shared `no_std` crate.
 
 ## What it does
 
-- Receives Modbus RTU traffic on **USART2** via an RS-485 transceiver.
-- Detects frame boundaries using the Modbus 3.5-character silence rule.
+- Receives Modbus RTU traffic through an RS-485 transceiver.
+- Detects frame boundaries using the Modbus 3.5-character silence rule (t3.5), with
+  the spec's fixed 1750 us above 19200 baud.
 - Validates the CRC-16.
-- Sends a human-readable line to the USB virtual serial port for every frame.
+- Sends one line per frame to the USB virtual serial port.
+- Counts frames it had to drop because the output stalled, and says so inline rather
+  than lying by omission.
 
 Example output:
 
 ```text
-[0.012] RX slave=0x01 func=0x03 (Read Holding Registers) data=00 00 00 0a crc=0xc5cd computed=0xc5cd OK
-[0.045] RX slave=0x01 func=0x03 (Read Holding Registers) data=14 00 01 00 02 00 03 ... crc=0x1234 computed=0x5678 BAD_CRC
+[0.012] RX slave=0x01 func=0x03 (Read Holding Registers) data=00 00 00 0a crc=0xcdc5 computed=0xcdc5 OK
+[0.045] RX slave=0x01 func=0x03 (Read Holding Registers) data=14 00 01 00 02 crc=0x1234 computed=0x5678 BAD_CRC
+[1.500] SHORT (3 bytes): aa bb cc
+[DROPPED 4 frames]
 ```
 
-## Hardware
-
-Target board: **STM32F411CEU6 Black Pill**
-
-### RS-485 module wiring
-
-Your module is a **3.3 V / 5 V TTL UART to RS-485 isolated converter**. Most of these have auto direction control, so you only need to connect the TTL RX side to the Black Pill and A/B to the bus.
-
-| Black Pill | Connection        | RS-485 module |
-|------------|-------------------|---------------|
-| 3.3 V      | →                 | VCC           |
-| GND        | →                 | GND           |
-| PA3        | ← module TTL RX   | TTL RX / RO   |
-| PA1        | → DE/RE (optional)| DE / RE       |
-| PA12       | USB DP            | —             |
-| PA11       | USB DM            | —             |
-
-Notes:
-
-- **PA3** is USART2_RX. This is the only required data pin for pure sniffing.
-- **PA1** is driven low to force receive mode. If your module is auto-direction, you can leave PA1 unconnected. If it has separate DE/RE pins, wire PA1 to both DE and RE (or tie them to GND manually).
-- Connect the module A/B terminals to the Modbus bus in parallel with the other devices.
-
-### USB
-
-Connect the Black Pill's micro-USB to your PC. Most Black Pill clones already have the 1.5 kΩ D+ pull-up to 3.3 V, so no extra hardware is needed.
-
-## Software setup
-
-1. Install the Rust target:
-
-   ```bash
-   rustup target add thumbv7em-none-eabihf
-   ```
-
-2. Install `probe-rs` (for flashing via ST-Link):
-
-   ```bash
-   cargo install probe-rs --features cli
-   ```
-
-3. Build:
-
-   ```bash
-   cargo build --release
-   ```
-
-## Flash
-
-The project is configured to flash with `probe-rs` through the `.cargo/config.toml` runner:
-
-```bash
-cargo run --release
-```
-
-Or manually:
-
-```bash
-probe-rs run --chip STM32F411CE target/thumbv7em-none-eabihf/release/stm32-modbus-sniffer
-```
-
-## View output
-
-After flashing, the Black Pill enumerates as a CDC ACM serial port (usually `/dev/ttyACM0` on Linux). Open it with any serial terminal at **115200 8N1**:
-
-```bash
-picocom -b 115200 /dev/ttyACM0
-# or
-minicom -D /dev/ttyACM0 -b 115200
-```
-
-The baud rate here is only the *USB-CDC virtual serial* speed; the actual Modbus bus baud rate is configured in `src/main.rs` (`BAUD_RATE`).
-
-## Configuration
-
-Edit `src/main.rs`:
-
-```rust
-const BAUD_RATE: u32 = 9_600; // change to your Modbus bus speed
-```
-
-Common Modbus settings:
-
-- 9600 baud, even parity, 1 stop bit (default in this firmware)
-- 19200 baud
-- 115200 baud
-
-The frame-timeout (3.5 character times) is computed automatically from `BAUD_RATE`.
-
-## Project structure
+## Workspace layout
 
 ```text
 .
-├── Cargo.toml
-├── memory.x
-├── build.rs
-├── .cargo/config.toml
-└── src
-    ├── main.rs
-    └── modbus.rs
+|-- Cargo.toml              workspace, [profile.release]
+|-- core/                   modbus-sniffer-core: no_std, host-testable
+|   \-- src/lib.rs          CRC, t3.5 rule, Frame, channel, line formatter
+|-- fw-stm32f411/           crate sniffer-stm32f411
+|   |-- .cargo/config.toml  thumbv7em-none-eabihf, probe-rs runner
+|   |-- build.rs, memory.x
+|   \-- src/main.rs
+\-- fw-esp32c6/             crate sniffer-esp32c6
+    |-- .cargo/config.toml  riscv32imac-unknown-none-elf, espflash runner
+    \-- src/main.rs
 ```
 
-## Troubleshooting
+There is deliberately no `.cargo/config.toml` at the workspace root, so the core
+crate's unit tests run on the host:
 
-- **USB does not enumerate**: make sure `vbus_detection = false` is set and the board has the D+ pull-up. Some clones need a 1.5 kΩ resistor from PA12 to 3.3 V.
-- **Garbage / no frames**: verify the RS-485 module GND is tied to Black Pill GND and the A/B wires are not swapped.
-- **CRC always BAD**: check that the bus parity matches the firmware (`ParityEven` by default). Many Modbus devices use even parity, but some use none.
+```bash
+cargo test -p modbus-sniffer-core
+```
+
+Each firmware crate carries its own target in its own `.cargo/config.toml`, so you
+build and flash from inside that directory.
+
+## Wiring (both boards)
+
+The RS-485 module in use is an **auto-direction, galvanically isolated TTL-to-RS-485
+converter** (szhjw "3.3V/5V TTL UART to RS485 Isolated, single chip, automatic flow
+control"). It has **no DE/RE pin** - direction is handled on the module - so sniffing
+needs three wires on the TTL side plus A/B to the bus.
+
+| Module (TTL side) | STM32F411 | ESP32-C6 | Note |
+|---|---|---|---|
+| VCC | 3V3 | 3V3 | use 3.3 V so the data line into the MCU stays 3.3 V logic |
+| GND | GND | GND | **TTL-side ground only** |
+| RXD | PA3 | GPIO4 | bus data into the MCU |
+| TXD | n/c | n/c | the sniffer never transmits |
+
+Module A/B go to the bus A/B, in parallel with the other devices.
+
+- If the line stays silent, swap A/B, and if that does not help swap RXD/TXD on the
+  module - the TTL-side labelling convention varies between these boards.
+- The module is isolated: **do not** tie the bus ground to the MCU ground. Only the
+  TTL-side GND connects.
+- On the STM32 build, PA1 is still configured as an output driven low. It is a
+  leftover DE/RE line and is harmless; leave it unconnected.
+- If the CRC is always bad, check the parity. The firmware defaults to 9600 8E1;
+  plenty of Modbus devices use 8N1 instead.
+
+## STM32F411 Black Pill
+
+Programmed over SWD with an ST-Link/V2; the Black Pill's own micro-USB carries the
+output and is a separate cable. Both need to be plugged in.
+
+```bash
+rustup target add thumbv7em-none-eabihf
+cargo install probe-rs-tools        # provides the probe-rs CLI
+
+cd fw-stm32f411
+cargo build --release                      # real sniffer
+cargo build --release --features selftest   # canned frames, no UART
+```
+
+Flash with `probe-rs download`, then **cold-boot the board by physically replugging
+its USB cable**:
+
+```bash
+ELF="$(cargo metadata --format-version 1 --no-deps \
+       | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
+probe-rs download --chip STM32F411CE \
+  "$ELF/thumbv7em-none-eabihf/release/sniffer-stm32f411"
+```
+
+(The binary is normally at `target/thumbv7em-none-eabihf/release/sniffer-stm32f411`
+under the workspace root; the command above also works if you have a global
+`build.target-dir` set in `~/.cargo/config.toml`.)
+
+**Do not run `probe-rs reset` afterwards.** On this setup it triggered a USB
+enumeration failure (-110) whose retry storm took down the whole USB hub, including
+the ST-Link, the Black Pill and unrelated devices on the same hub. Replugging the
+Black Pill is the safe way to restart it.
+
+Read the output:
+
+```bash
+picocom -b 115200 /dev/ttyACM0     # the baud rate is irrelevant for USB-CDC
+```
+
+## ESP32-C6-DevKitC-1
+
+The DevKitC-1 has two USB-C ports. Use the one labelled **"USB"** - that is the
+chip's own USB-Serial-JTAG, which both flashes the board and carries the sniffer
+output. The port labelled "UART" is the CP2102N bridge and is not used here.
+
+```bash
+rustup target add riscv32imac-unknown-none-elf
+cargo install espflash
+
+cd fw-esp32c6
+cargo build --release                       # real sniffer
+cargo build --release --features selftest   # canned frames, no UART
+
+cargo run --release                         # flash + monitor via espflash
+```
+
+`cargo run` uses the runner in `fw-esp32c6/.cargo/config.toml`
+(`espflash flash --monitor --chip esp32c6`), which flashes and then opens the
+monitor on the same port. To just read the output later:
+
+```bash
+picocom -b 115200 /dev/ttyACM0
+```
+
+Panic messages and backtraces are printed to this same port by esp-backtrace, so a
+crash is visible where you are already looking rather than being a silent hang.
+
+## Configuration
+
+The bus parameters are compile-time constants at the top of each firmware's
+`src/main.rs`:
+
+```rust
+const BAUD_RATE: u32 = 9_600;   // change to your Modbus bus speed
+```
+
+Parity and stop bits are set next to the UART config in the same file (even parity,
+1 stop bit by default). The frame timeout is derived from `BAUD_RATE` by
+`modbus_sniffer_core::frame_timeout_us`, which is a `const fn`, so changing the baud
+rate is enough.
+
+On the ESP32-C6 the input pin is named once, as the `RxPin` type alias in
+`fw-esp32c6/src/main.rs`; change that and the matching `peripherals.GPIO4` in
+`main` to move the input.
+
+## Self-test
+
+Both firmwares have a `selftest` cargo feature. It leaves the UART uninitialised and
+instead injects three canned frames on a loop - a valid request, a valid 20-byte
+response, and a deliberately CRC-corrupted frame - into the same channel the real
+sniffer uses. That exercises the whole output path, the CRC decode and the BAD_CRC
+branch with no bus attached. The two builds are mutually exclusive at compile time.
+
+## Scope
+
+This is a frame logger, not a full protocol analyzer. It decodes the address,
+function code and CRC, and hex-dumps the payload; it does not decode register
+values, pair requests with responses, or label master vs slave (everything reads
+`RX`). Exception responses (function code with bit 7 set, e.g. 0x83) currently
+decode as `Unknown`.

@@ -1,179 +1,258 @@
-# Handoff: stm32-modbus-sniffer
+# Handoff: modbus-sniffer
 
-Last updated: 2026-06-23
+Last updated: 2026-10-03
 
 ## What this is
 
-Rust/Embassy firmware for an STM32F411CEU6 "Black Pill" that passively sniffs a
-Modbus RTU bus over an RS-485 transceiver and streams decoded frames out the
-Black Pill's native USB port as a CDC-ACM virtual serial port (a frame logger /
-"protocol analyzer").
+Rust/Embassy firmware that passively sniffs a Modbus RTU bus over an RS-485
+transceiver and streams decoded frames out the board's native USB port as a
+virtual serial port (a frame logger / "protocol analyzer"). Two boards, one
+Cargo workspace, one shared decode core.
 
-Target: thumbv7em-none-eabihf. Builds clean. Not a git repo (consider `git init`).
+Git repo, branch `main`. Everything below compiles warning-free.
+
+## Layout
+
+```text
+Cargo.toml              workspace (resolver 2), holds [profile.release]
+core/                   modbus-sniffer-core - no_std, std only under cfg(test)
+fw-stm32f411/           sniffer-stm32f411   - STM32F411CEU6 Black Pill
+fw-esp32c6/             sniffer-esp32c6     - ESP32-C6-DevKitC-1 (WROOM-1)
+```
+
+There is NO `.cargo/config.toml` at the workspace root - that is deliberate, so
+`cargo test -p modbus-sniffer-core` from the root runs on the host. Each firmware
+crate has its own `.cargo/config.toml` with its target and runner, so you build
+and flash from inside that directory.
+
+`core/` holds: `crc16`, `format_function`, `Frame`, `MAX_FRAME_LEN`,
+`FRAME_CHANNEL` (embassy-sync Channel, depth 8), `DROPPED` (AtomicU32),
+`emit_frame(buf, timestamp_ms)` (non-async; only try_sends - the timestamp is
+passed in so core needs no embassy-time dependency), `format_frame` (writes
+straight into a caller-supplied `Line`, no double buffering),
+`format_dropped_marker`, `build_frame` and `const fn frame_timeout_us(baud)`.
+13 host unit tests cover the CRC vector, the OK / BAD_CRC / SHORT / no-payload /
+unknown-function line formats, worst-case line length, the marker text, t3.5 at
+9600 / 19200 / 115200, and `emit_frame`'s channel-overflow accounting.
 
 ## Current state (IMPORTANT - read first)
 
-- 2026-06-23 (later session): Code-review fixes #1, #4, #2 IMPLEMENTED and
-  compile-verified warning-free in BOTH build configs. NOT yet flashed/verified
-  on hardware (ST-Link was unplugged - see below). Details under "Fixes applied".
-- Firmware is COMPLETE and compiles warning-free in both build configs.
-- A `selftest` cargo feature was added this session (see below) and was flashed
-  and VERIFIED working end-to-end on real hardware: frames appeared on
-  /dev/ttyACM0 with correct decode, CRC OK and BAD_CRC paths both confirmed.
-- The DEFAULT (real sniffer) build was then flashed back. Its `probe-rs download`
-  completed, but the subsequent `probe-rs reset` triggered a USB enumeration
-  failure (error -110), and retry storms crashed the shared USB hub (bus 5),
-  which took down the ST-Link AND the Black Pill (and the user's mic/receiver).
-- LAST KNOWN HARDWARE STATE: hub still crashed. `probe-rs list` finds no probe;
-  neither ST-Link (0483:3748) nor Black Pill (c0de:cafe) enumerate; no ttyACM.
-  RECOVERY REQUIRED BY USER: physically unplug Black Pill USB + ST-Link, wait
-  ~5s, replug (ST-Link ideally into a direct PC port, not the hub).
+- STM32F411: unchanged behaviour, compiles warning-free in both build configs.
+  Last hardware verification was of the pre-workspace code (selftest build
+  verified end-to-end on /dev/ttyACM0; default build flashed but its decode was
+  never re-confirmed because of the USB hub incident below). The restructure has
+  NOT been re-flashed.
+- ESP32-C6: NEW, compile-verified only in both build configs. Never flashed,
+  espflash has never been run, nothing has touched hardware.
+- The embassy dependencies moved from git (embassy-rs/embassy main) to the
+  equivalent crates.io releases. The versions matched exactly; the only source
+  change needed was the RCC enum variant casing (`PllSource::HSE`,
+  `Sysclk::PLL1_P`, `PllMul::MUL192`, `AHBPrescaler::DIV1`, ...). The clock tree,
+  `Driver::new_fs`, `RingBufferedUartRx`/`into_ring_buffered` and the
+  `spawn(task().unwrap())` idiom are all unchanged.
+
+### Pinned versions
+
+| Crate | Version |
+|---|---|
+| embassy-stm32 | 0.6.0 (crates.io) |
+| embassy-executor | 0.10.0 |
+| embassy-time | 0.5.1 |
+| embassy-sync | 0.8.0 |
+| embassy-usb | 0.6.0 |
+| embassy-futures | 0.1.2 |
+| esp-hal | 1.2.2 |
+| esp-rtos | 0.4.0 (features esp32c6, embassy) |
+| esp-backtrace | 0.20.0 |
+| esp-println | 0.18 (no default features; esp32c6, jtag-serial, critical-section) |
+| esp-bootloader-esp-idf | 0.6.0 |
+| embedded-io-async | 0.7 |
+
+One lockfile holds both firmwares. The hazard was `embassy-time-driver`'s
+`links = "embassy-time"`: the resolver permits only one copy of that per
+workspace. esp-rtos 0.4 wants embassy-executor ^0.10 / embassy-sync ^0.8 /
+embassy-time-driver ^0.2, which is exactly what embassy-stm32 0.6.0 wants, so a
+single embassy-time-driver 0.2.2 satisfies both. The OLD esp-hal-embassy 0.9.1
+would NOT have worked - it still pins embassy-executor ^0.7 and embassy-time
+^0.4. If a future bump breaks this, the fallback is to make each firmware crate
+its own workspace with a path dep on `core/`.
 
 ## Hardware
 
-- Programmer: ST-Link/V2 dongle over SWD (JTAG fails, SWD works - normal).
-- Black Pill's own micro-USB/USB-C carries the CDC output (PA11/PA12). This is
-  SEPARATE from the ST-Link. Both must be plugged in: ST-Link for flashing,
-  Black Pill USB for reading output.
-- RS-485 module the user owns: szhjw "3.3V/5V TTL UART to RS485 Isolated, single
-  chip, automatic flow control" => NO DE/RE pin (auto-direction), galvanically
-  isolated (do NOT tie bus ground to Black Pill ground).
+### STM32F411 Black Pill
 
-### Wiring for sniffing (3 wires to Black Pill + A/B to bus)
+- Programmer: ST-Link/V2 over SWD (JTAG fails, SWD works - normal).
+- The Black Pill's own micro-USB carries the CDC output (PA11/PA12), separate
+  from the ST-Link. Both cables must be plugged in.
+- 2026-06-23 incident: after `probe-rs download` succeeded, `probe-rs reset`
+  triggered a USB enumeration failure (-110) and the retry storm crashed the
+  shared USB hub, taking down the ST-Link, the Black Pill and the user's
+  mic/receiver. Recovery was a physical replug. **Never `probe-rs reset` this
+  board; cold-boot it by replugging its USB cable.**
 
-| Module (TTL side) | Black Pill | Note |
-|-------------------|-----------|------|
-| VCC | 3V3 | use 3.3V so data line to PA3 stays 3.3V logic |
-| GND | GND | TTL-side ground only |
-| RXD | PA3 | USART2_RX, bus data into MCU. If silent, try module TXD instead (label convention varies) |
-| TXD | (nc) | sniffer never transmits |
+### ESP32-C6-DevKitC-1
 
-Module A/B -> bus A/B (swap if garbage/silent). PA1 (firmware DE pin) left
-unconnected for this auto-direction module.
+- Two USB-C ports. The one labelled **"USB"** is the chip's own USB-Serial-JTAG:
+  it both flashes and carries the sniffer output (/dev/ttyACM0). The one labelled
+  "UART" is the CP2102N bridge and is unused.
+- No separate programmer needed.
 
-NOTE: README still documents the older DE/RE-on-PA1 wiring. User asked whether to
-update it to the auto-direction wiring above - NOT yet done. Pending.
+### RS-485 module (same one for both boards)
 
-## Build / flash recipes
+szhjw "3.3V/5V TTL UART to RS485 Isolated, single chip, automatic flow control":
+NO DE/RE pin (auto-direction), galvanically isolated - do NOT tie the bus ground
+to the MCU ground.
+
+| Module (TTL side) | STM32F411 | ESP32-C6 | Note |
+|---|---|---|---|
+| VCC | 3V3 | 3V3 | 3.3 V so the data line into the MCU is 3.3 V logic |
+| GND | GND | GND | TTL-side ground only |
+| RXD | PA3 | GPIO4 | bus data into the MCU |
+| TXD | n/c | n/c | the sniffer never transmits |
+
+Module A/B -> bus A/B (swap if silent; if still silent swap module RXD/TXD, the
+TTL-side labelling convention varies). On the STM32 build PA1 is still driven low
+as a leftover DE/RE output - harmless, leave it unconnected.
+
+Bus settings chosen by the user: 9600 8E1. There is still no real Modbus bus to
+test against - hence the selftest feature.
+
+## Build / test / flash recipes
 
 ```bash
-# Real sniffer (default)
+# Host unit tests for the shared core (from the workspace root)
+cargo test -p modbus-sniffer-core
+
+# STM32F411
+cd fw-stm32f411
 cargo build --release
-# Self-test (inject canned frames, no UART - verifies USB path without a bus)
 cargo build --release --features selftest
+probe-rs download --chip STM32F411CE <target-dir>/thumbv7em-none-eabihf/release/sniffer-stm32f411
+# then COLD-BOOT by physically replugging the Black Pill USB. Not `probe-rs reset`.
 
-# Flash (do NOT use `probe-rs reset` after - it caused the hub crash):
-probe-rs download --chip STM32F411CE target/thumbv7em-none-eabihf/release/stm32-modbus-sniffer
-# Then COLD-BOOT by physically replugging the Black Pill USB, not probe-rs reset.
+# ESP32-C6 (build only so far)
+cd fw-esp32c6
+cargo build --release
+cargo build --release --features selftest
+cargo run --release        # espflash flash --monitor --chip esp32c6, over the "USB" port
 
-# Read output:
-ls /dev/ttyACM0          # user is in `uucp` group, perms OK
-minicom -D /dev/ttyACM0  # baud irrelevant for USB-CDC
+# Read output on either board
+minicom -D /dev/ttyACM0    # baud irrelevant for USB-CDC / USB-Serial-JTAG
 ```
 
-Bus settings chosen by user: 9600 8E1 (firmware default, src/main.rs:31 BAUD_RATE,
-parity ParityEven). User has NO Modbus bus to test against right now - hence the
-selftest feature.
+Note the user has a global `build.target-dir` in `~/.cargo/config.toml`, so the
+ELF is not under `./target`. `cargo metadata --format-version 1 --no-deps` reports
+the real `target_directory`.
 
-## What was added this session
+## ESP32-C6 firmware notes
 
-`selftest` cargo feature (Cargo.toml [features], mutually exclusive with the real
-sniffer at compile time per user's global rule). When enabled, `selftest_task()`
-(bottom of src/main.rs) injects 3 canned frames (valid request, valid 20-byte
-response, deliberately CRC-corrupted frame) into FRAME_CHANNEL on a loop, so the
-USB/format/CRC path is exercised with no hardware. Sniffer-only items
-(sniffer_task, frame_receiver, BAUD_RATE, several imports) are cfg-gated off in
-selftest builds so both configs are warning-free.
-
-Also corrected (then reverted): the `spawner.spawn(task().unwrap())` idiom. NOTE
-this embassy version's #[task] macro makes the task fn return
-Result<SpawnToken, SpawnError> and spawn() returns () - so `.unwrap()` goes on the
-TASK CALL, inside spawn(), NOT on spawn()'s result. The original code was correct;
-do not "fix" it.
-
-## Fixes applied (2026-06-23 later session) - compile-verified, not yet on HW
-
-#1 DONE - RingBufferedUartRx. sniffer_task now does
-   `UartRx::new(...).into_ring_buffered(RX_RING.init([0u8;256]))` (256-byte DMA
-   ring via static_cell::StaticCell). frame_receiver signature is now
-   `&mut RingBufferedUartRx<'static>` and reads in 64-byte chunks instead of
-   per byte. Default config (eager_reads=0) makes read() wake on the UART idle
-   line, i.e. it returns a whole frame at once; the t3.5 timer (measured from
-   that return) still fires before any properly-gapped next frame can complete,
-   so framing is preserved (verified by timing analysis: even a 1-byte frame at
-   the minimum 3.5-char gap stays separated). Overrun window eliminated.
-
-#4 DONE - spec-correct frame timeout. frame_receiver computes:
-   `if BAUD_RATE > 19_200 { 1750 us } else { char_us * 4 }`. BAUD_RATE is const
-   so this folds at compile time. At the 9600 default this is unchanged
-   behaviour; it only matters if BAUD_RATE is raised above 19200.
-
-#2 DONE - dropped-frame counter. `static DROPPED: AtomicU32`. emit_frame no
-   longer evicts-oldest; on a full channel it drops the new frame and does
-   `DROPPED.fetch_add(1, Relaxed)`. cdc_loop does `DROPPED.swap(0)` before each
-   frame and, if nonzero, writes a `[DROPPED n frames]\r\n` marker inline (in
-   temporal order). The selftest path shares emit_frame so the counter is
-   exercised there too (harmless).
-
-Build/RAM after fixes: text 25296, data 224, bss 6560 (ring + channel). Fits
-F411CE easily. Both `cargo build --release` and `--features selftest` are
-warning-free (forced full rebuild, grepped clean).
-
-NEXT ON HARDWARE: replug ST-Link, `probe-rs download` the default build, cold
-replug Black Pill, confirm /dev/ttyACM0 still decodes. The selftest build can
-validate the USB/DROPPED-marker path without a bus.
+- esp-hal 1.2.2 + esp-rtos 0.4.0 `embassy` feature. `#[esp_hal::main] async fn
+  main(spawner: Spawner)` expands to an `esp_rtos::embassy::Executor`, so
+  `embassy-executor` must be a direct dependency (the macro names
+  `::embassy_executor::task`) with NO `platform-*` feature enabled - esp-rtos
+  provides `__pender`. `esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0)`
+  is called from inside the main task, before anything awaits a Timer, because
+  esp-rtos owns the embassy-time driver.
+- `esp_bootloader_esp_idf::esp_app_desc!()` at crate root; without the app
+  descriptor the second-stage bootloader rejects the image.
+- `.cargo/config.toml` needs `-C link-arg=-Tlinkall.x` (esp-hal's build script
+  only puts the scripts in OUT_DIR) and `-C force-frame-pointers` (esp-backtrace
+  on RISC-V falls back to a raw stack dump without it).
+- CPU at `CpuClock::max()` = 160 MHz. Watchdogs are disabled by `esp_hal::init`.
+- Output: `UsbSerialJtag::new(peripherals.USB_DEVICE).into_async().split()`, Tx
+  half handed to the output task. `write_async`/`flush_tx_async` are private, so
+  the traits come from `embedded_io_async::Write` (esp-hal's `unstable` feature
+  enables that impl).
+- Input: `UartRx::new(UART1, config).with_rx(GPIO4).into_async()`, 9600 8E1, RX
+  FIFO full threshold 32, hardware RX idle timeout 2 symbol times (~2.29 ms).
+  `read_async` therefore returns once per burst; the frame boundary is still
+  `select(read_async, Timer::after(frame_timeout_us(BAUD_RATE)))`. Timing check
+  at 9600: read returns at last_byte+2.29 ms, the t3.5 timer then fires at
+  +6.87 ms, while the earliest a correctly-gapped 1-byte next frame could be
+  reported is +7.44 ms - so frames stay separated. Note `RxConfig::timeout` is in
+  symbol times and the register caps `timeout * symbol_len` at 1023 bits.
+- Panic: esp-backtrace `panic-handler` + `println`, with esp-println pinned to
+  `jtag-serial` (NOT its default `auto`). Panics print on the same /dev/ttyACM0
+  as the analyzer output. It coexists with the async driver because esp-println's
+  serial-JTAG backend pokes the USB_DEVICE FIFO/CONF registers directly, never
+  takes the peripheral singleton, polls rather than using the interrupt, and
+  bails out after a bounded spin if no host is draining - so it cannot hang an
+  unattached board. esp-backtrace then parks the core with interrupts off.
+- Size, release build (section sizes; `.text_gap` and `.stack` are NOBITS, i.e.
+  alignment padding and a reserved region, not flashed and not used):
+  flash `.text` 42312 + `.rodata` 13520 + `.trap` 1996 + `.rwtext` 3584 +
+  `.data` 1760 + `.flash.appdesc` 256 = about 63 KB. Static RAM
+  (`.trap + .rwtext + .data + .bss`) about 12 KB of the 512 KB HP SRAM.
 
 ## Code review findings (verdict: solid at 9600/19200, degrades predictably above)
 
-Ranked, all confirmed with arithmetic:
+Ranked, all confirmed with arithmetic.
 
 HIGH
-1. Per-byte DMA read in frame_receiver -> overrun risk. F411 USART has no RX FIFO;
-   single-byte DMA gives only ONE char time of slack to re-arm (95.5 us @115200 vs
-   1146 us @9600). Competes with USB task servicing. FIX: RingBufferedUartRx
-   (256-byte ring = 24.4 ms slack @115200, ~250x). Headline fix.
-2. emit_frame (src/main.rs ~330) silently drops frames when channel full (depth 8,
-   ~16-40 ms buffering). An analyzer that lies by omission. FIX: AtomicU32 dropped
-   counter + emit "[DROPPED n]" marker.
-3. USB backpressure: cdc_loop writes synchronously; slow/non-draining host blocks
-   write_packet -> channel fills -> #2 drops. Bandwidth is NOT the issue (~40 KB/s
-   out vs USB FS >1 MB/s); it's latency/stall.
+
+1. **DONE** - Per-byte DMA read in frame_receiver -> overrun risk. F411 USART has
+   no RX FIFO; single-byte DMA gives only ONE char time of slack to re-arm
+   (95.5 us @115200 vs 1146 us @9600). Competes with USB task servicing. FIXED
+   with `RingBufferedUartRx` (256-byte ring = 24.4 ms slack @115200, ~250x) and
+   64-byte chunked reads. Headline fix.
+2. **DONE** - emit_frame silently dropped frames when the channel was full
+   (depth 8, ~16-40 ms buffering). An analyzer that lies by omission. FIXED with
+   an `AtomicU32 DROPPED` counter; the output task does `take_dropped()` before
+   each frame and writes a `[DROPPED n frames]` marker inline, in temporal order.
+   Now lives in `core/` and is shared by both firmwares.
+3. USB backpressure: the output task writes synchronously; a slow or
+   non-draining host blocks the write -> channel fills -> #2 drops. Bandwidth is
+   NOT the issue (~40 KB/s out vs USB FS >1 MB/s); it is latency/stall. Largely
+   mitigated by #2 making the loss visible.
 
 MEDIUM
-4. Frame timeout `char_us * 4` not spec-compliant above ~58.7 kbaud. Spec fixes
-   t1.5=750us above 19200; code boundary drops below 750us => SPLITS compliant
-   frames. Crossover: safe <=19200, marginal @57600 (760us), broken @115200 (380us).
-   FIX: clamp to spec's fixed 1750us above 19200.
+
+4. **DONE** - Frame timeout `char_us * 4` was not spec-compliant above ~58.7
+   kbaud. The spec fixes t1.5 = 750 us above 19200; the old boundary dropped
+   below 750 us and so SPLIT compliant frames. Crossover: safe <=19200, marginal
+   @57600 (760 us), broken @115200 (380 us). FIXED by clamping to the spec's
+   fixed 1750 us above 19200. Now `core::frame_timeout_us`, a `const fn` with
+   unit tests at 9600 / 19200 / 115200.
 5. Exception responses (func | 0x80, e.g. 0x83) decode as "Unknown" - the most
-   interesting frames are invisible. modbus.rs format_function.
-6. Everything labeled "RX"; shallow decode (no register values). It's a frame
-   logger, not a full analyzer - README oversells.
-7. Baud/parity are compile-time consts; CDC RX direction is unused. Missed chance
-   for runtime config over the existing USB channel.
-8. panic-halt + panic!("USB buffer overflow") (line 242) = silent brick. Use
-   panic-reset + LED heartbeat.
-9. Any UART error flushes partial frame as a real frame -> noise creates phantom
-   SHORT/BAD_CRC frames. Should discard partial on error vs emit on silence.
+   interesting frames are invisible. `core::format_function`.
+6. Everything is labeled "RX"; shallow decode (no register values). It is a frame
+   logger, not a full analyzer. The README now says so instead of overselling.
+7. Baud/parity are compile-time consts; the CDC RX direction is unused. Missed
+   chance for runtime config over the existing USB channel.
+8. panic-halt plus `panic!("USB buffer overflow")` = silent brick on the STM32.
+   Use panic-reset plus an LED heartbeat. (The ESP32-C6 side is already covered:
+   esp-backtrace prints the panic on the output port.)
+9. Any UART error flushes the partial frame as a real frame -> noise creates
+   phantom SHORT/BAD_CRC frames. Should discard the partial on error and only
+   emit on silence. Both firmwares currently share this behaviour deliberately,
+   for parity.
 
-LOW: format_frame double-buffers (String then copy, buf param redundant); worst
-line ~831 bytes into 1024 buf = silent truncation if format grows; only 1 CRC
-unit test (framing untested); cosmetic double-space before "crc=".
+LOW: ~~format_frame double-buffers (String then copy, buf param redundant)~~ DONE
+- it writes straight into the caller's `Line`. ~~cosmetic double-space before
+"crc="~~ DONE. ~~only 1 CRC unit test (framing untested)~~ DONE - 13 host tests.
+Worst line is ~830 bytes into the 1024-byte `Line`; still a silent-truncation
+risk if the format grows, though `format_frame` now returns `Err(FormatError)`
+and the callers count it as a dropped frame instead of emitting a lying line.
 
-CONFIRMED GOOD (do not touch): clock tree (96 MHz sysclk, exact 48 MHz USB via
-M=25/N=192/Q=4 - M=25 is forced for exact USB from a 25 MHz crystal, NOT a smell);
-vbus_detection=false; CRC-16 correct; ZLP-on-64-multiple flush handling; task
-structure.
+CONFIRMED GOOD (do not touch): the STM32 clock tree (96 MHz sysclk, exact 48 MHz
+USB via M=25/N=192/Q=4 - M=25 is forced for exact USB from a 25 MHz crystal, NOT
+a smell); `vbus_detection = false`; the CRC-16; the ZLP-on-64-multiple flush
+handling; the task structure.
 
-## Pending decision / next step
+## Next steps
 
-Fixes #1, #4, #2 are DONE in code (see "Fixes applied" above) but NOT yet flashed
-or verified on hardware - the ST-Link was unplugged after the hub crash. Next
-hardware step: replug ST-Link, flash the default build, cold replug, verify
-/dev/ttyACM0 decode still works. Remaining review items not started: #3 (USB
-backpressure - largely mitigated by #2's drop+counter), #5 (exception-response
-decode), #6-#9, and the LOW items.
+Needs hardware, in order:
 
-Open follow-ups also raised, not yet done:
-- Update README wiring to the auto-direction (no DE/RE) module.
-- Fold the two flash recipes (default vs selftest) into README.
-- `git init` the repo.
+1. ESP32-C6: wire the module to GPIO4, flash the `selftest` build over the "USB"
+   port, confirm /dev/ttyACM0 shows the three canned frames with correct decode
+   and both the OK and BAD_CRC branches. Then flash the default build and check
+   real traffic.
+2. ESP32-C6: confirm the UART framing choices on real traffic - the 2-symbol
+   hardware RX idle timeout and the 32-byte FIFO threshold are reasoned about but
+   not measured.
+3. ESP32-C6: confirm that a panic really does print on /dev/ttyACM0 while the
+   async driver has been running.
+4. STM32F411: replug the ST-Link, `probe-rs download` the default build, cold
+   replug the Black Pill, confirm the decode still works after the restructure.
+
+Code work not started: review items #3, #5, #6, #7, #8, #9.
