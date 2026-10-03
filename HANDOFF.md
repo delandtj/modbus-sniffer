@@ -227,8 +227,10 @@ MEDIUM
    @57600 (760 us), broken @115200 (380 us). FIXED by clamping to the spec's
    fixed 1750 us above 19200. Now `core::frame_timeout_us`, a `const fn` with
    unit tests at 9600 / 19200 / 115200.
-5. Exception responses (func | 0x80, e.g. 0x83) decode as "Unknown" - the most
-   interesting frames are invisible. `core::format_function`.
+5. DONE 2026-10-03, verified on ESP32-C6 hardware. Exception responses now
+   print e.g. `func=0x83 (Exception: Read Holding Registers) exception=0x02
+   (Illegal Data Address)`; a flagged frame with a body other than one byte
+   falls back to hex data. `core::format_exception`, with unit tests.
 6. Everything is labeled "RX"; shallow decode (no register values). It is a frame
    logger, not a full analyzer. The README now says so instead of overselling.
 7. Baud/parity are compile-time consts; the CDC RX direction is unused. Missed
@@ -259,11 +261,16 @@ Needs hardware, in order:
 
 1. ESP32-C6: (selftest and FTDI-driven traffic DONE 2026-10-03.) Sniff a real
    Modbus master/slave bus.
-2. ESP32-C6: enable the internal pull-up on the RX pin so a loose wire idles
-   instead of producing noise frames.
+2. (ESP32-C6 RX pull-up: no change needed - esp-hal's `with_rx` already enables
+   the internal pull-up; documented in a comment.)
 3. ESP32-C6: confirm that a panic really does print on /dev/ttyACM0 while the
    async driver has been running.
 4. STM32F411: replug the ST-Link, `probe-rs download` the default build, cold
    replug the Black Pill, confirm the decode still works after the restructure.
+   The STM32 had the same frame-splitting bug as the ESP32-C6 (ring-buffered
+   reads only woke on idle line / DMA half-full, so the t3.5 timer fired
+   mid-frame; embassy's own docs warn about this). Fixed with
+   `uart_cfg.eager_reads = Some(1)`, compile-verified only. Test it with an
+   FTDI RS-485 adapter driving frames at 20 ms gaps, as was done for the C6.
 
-Code work not started: review items #3, #5, #6, #7, #8, #9.
+Code work not started: review items #3, #6, #7, #8, #9.

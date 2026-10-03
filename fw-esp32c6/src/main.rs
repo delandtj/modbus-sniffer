@@ -160,6 +160,8 @@ async fn sniffer_task(uart: esp_hal::peripherals::UART1<'static>, rx_pin: RxPin)
                 .with_timeout(RX_IDLE_SYMBOLS),
         );
 
+    // with_rx() also enables the pin's internal pull-up, so a disconnected or
+    // loose RX wire idles high (silence) instead of floating into noise frames.
     let rx = UartRx::new(uart, config)
         .unwrap()
         .with_rx(rx_pin)
