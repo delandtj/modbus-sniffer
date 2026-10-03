@@ -10,12 +10,19 @@ selftest = []
 [dependencies]
 embassy-executor = "0.10.0"
 embassy-futures = "0.1.2"
+embassy-net = { version = "0.9", default-features = false, features = ["tcp", "dhcpv4", "dhcpv4-hostname", "medium-ethernet", "proto-ipv4"] }
+embassy-sync = "0.8"
 embassy-time = "0.5.1"
 embedded-io-async = "0.7"
+esp-alloc = { version = "0.11", features = ["esp32c6"] }
 esp-backtrace = { version = "0.20.0", features = ["esp32c6", "panic-handler", "println"] }
 esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c6"] }
 esp-hal = { version = "1.2.2", features = ["esp32c6", "unstable"] }
 esp-println = { version = "0.18", default-features = false, features = ["critical-section", "esp32c6", "jtag-serial"] }
-esp-rtos = { version = "0.4.0", features = ["esp32c6", "embassy"] }
+esp-radio = { version = "1.0.0-beta.1", default-features = false, features = ["esp32c6", "wifi", "esp-alloc", "unstable"] }
+esp-rtos = { version = "0.4.0", features = ["esp32c6", "embassy", "esp-radio", "esp-alloc"] }
+esp-storage = { version = "0.10", features = ["esp32c6"] }
 heapless = "0.8.0"
+heapless09 = { version = "0.9", package = "heapless", default-features = false }
 modbus-sniffer-core = { version = "0.1.0", path = "../core" }
+static_cell = "2"
