@@ -45,18 +45,22 @@ Example output:
 |   |-- .cargo/config.toml  thumbv7em-none-eabihf, probe-rs runner
 |   |-- build.rs, memory.x
 |   \-- src/main.rs
-\-- fw-esp32c6/             crate sniffer-esp32c6
-    |-- .cargo/config.toml  riscv32imac-unknown-none-elf, espflash runner
-    |-- src/main.rs         init, line producer, USB consumer, commands
-    |-- src/net.rs          WiFi station, DHCP, TCP line server
-    \-- src/settings.rs     bus settings in the nvs partition
+|-- fw-esp32c6/             crate sniffer-esp32c6
+|   |-- .cargo/config.toml  riscv32imac-unknown-none-elf, espflash runner
+|   |-- src/main.rs         init, line producer, USB consumer, commands
+|   |-- src/net.rs          WiFi station, DHCP, TCP line server
+|   \-- src/settings.rs     bus settings in the nvs partition
+\-- tools/                  modbus-sniffer-tools: host crate, see tools/README.md
+    |-- src/bin/            sniffer-capture, sniffer-analyze, fake-device
+    \-- systemd/            modbus-sniffer-capture.service
 ```
 
 There is deliberately no `.cargo/config.toml` at the workspace root, so the core
-crate's unit tests run on the host:
+crate's unit tests and the host tools build for the host:
 
 ```bash
 cargo test -p modbus-sniffer-core
+cargo test -p modbus-sniffer-tools
 ```
 
 Each firmware crate carries its own target in its own `.cargo/config.toml`, so you
@@ -297,12 +301,37 @@ real sniffer uses. That exercises the whole output path, the CRC decode and the
 BAD_CRC branch with no bus attached. WiFi, the TCP server and the commands all still
 work in a selftest build. The two builds are mutually exclusive at compile time.
 
+## Host tools
+
+For multi-day captures there is a host crate, `tools/`
+(package `modbus-sniffer-tools`), with two binaries:
+
+- `sniffer-capture` - a daemon for an always-on Linux server. It holds one TCP
+  connection to the sniffer, reconnects forever, maps the device's uptime stamps
+  onto wall-clock time and writes one log file per local day. A unix control
+  socket lets you mark the log while you change a setting on the controller:
+  `sniffer-capture note "setpoint 26 -> 27"`.
+- `sniffer-analyze` - reads those logs back and writes a markdown protocol map:
+  the poll loop with its periods and latencies, a register map in hex / u16 /
+  s16 / tenths, the writes, the exceptions, and - the useful part - which
+  registers changed around each note.
+
+```bash
+cargo install --path tools
+cargo test -p modbus-sniffer-tools     # drives the daemon against a fake device
+```
+
+See [tools/README.md](tools/README.md) for the systemd unit, the control CLI and
+the mapping workflow.
+
 ## Scope
 
-This is a frame logger, not a full protocol analyzer. It decodes the address,
-function code, exception code and CRC, and hex-dumps the payload; it does not decode
-register values, pair requests with responses, or label master vs slave (everything
-reads `RX`).
+The **firmware** is a frame logger, not a protocol analyzer. It decodes the
+address, function code, exception code and CRC, and hex-dumps the payload; it
+does not decode register values, pair requests with responses, or label master
+vs slave (everything reads `RX`). That decoding is deliberately left to
+`sniffer-analyze` on the host, where it can look at days of traffic at once
+instead of one frame at a time.
 
 The TCP side is plaintext with no authentication: anything that can reach port 4000
 can read the bus traffic and change the bus settings. That is fine on a trusted home

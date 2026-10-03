@@ -1,0 +1,64 @@
+[Unit]
+Description=Modbus RTU sniffer capture daemon
+Documentation=file:///usr/local/share/doc/modbus-sniffer/tools-README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sniffer-capture run \
+    --device modbus-sniffer:4000 \
+    --dir /var/lib/modbus-sniffer \
+    --control /run/modbus-sniffer/ctl.sock
+Restart=always
+RestartSec=5s
+
+# The daemon reconnects on its own, so a restart here only ever happens after a
+# real crash; losing nothing matters more than restarting fast.
+TimeoutStopSec=10s
+
+# A static system user and group, created once with:
+#   sudo groupadd --system modbus-sniffer
+#   sudo useradd --system --gid modbus-sniffer --no-create-home \
+#        --shell /usr/sbin/nologin modbus-sniffer
+# This is deliberately NOT DynamicUser=yes: the control socket has to be usable
+# by a human running `sniffer-capture note "..."`, and you cannot add yourself to
+# a group that only exists for the lifetime of the service. Add yourself with
+#   sudo usermod -aG modbus-sniffer "$USER"
+# and log out and back in.
+User=modbus-sniffer
+Group=modbus-sniffer
+
+# /var/lib/modbus-sniffer for the daily logs, /run/modbus-sniffer for the socket.
+# RuntimeDirectory is 0750 so only the group can reach the socket inside it; the
+# socket itself is created 0660 by the daemon.
+StateDirectory=modbus-sniffer
+StateDirectoryMode=0750
+RuntimeDirectory=modbus-sniffer
+RuntimeDirectoryMode=0750
+
+# Hardening. The daemon needs one outbound TCP connection, one unix socket and
+# its two directories; nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
