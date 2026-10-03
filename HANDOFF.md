@@ -462,40 +462,75 @@ USB via M=25/N=192/Q=4 - M=25 is forced for exact USB from a 25 MHz crystal, NOT
 a smell); `vbus_detection = false`; the CRC-16; the ZLP-on-64-multiple flush
 handling; the task structure.
 
-## Log compaction (design, not built)
+## Log compaction (BUILT 2026-10-03)
 
-Measured 2026-10-03 on the real bus: ~346k lines and ~108 MiB per day,
-because the controller polls the same two blocks every second. Over 600 polls
-the settings response was identical to the previous one 599 times; the status
+The measurements that motivated it: ~346k lines and ~108 MiB per day, because
+the controller polls the same two blocks every second. Over 600 polls the
+settings response was identical to the previous one 599 times; the status
 response 333 times, and most of the remaining changes came from three jittery
 registers (0x001b compressor Hz +/-1, 0x001e DC bus volts, 0x0024 fan rpm).
 A rotated day gzips about 35x (~3 MiB).
 
-Proposal, in `sniffer-capture` (host side, so the device and the raw stream
-stay simple):
+Built as `tools/src/compact.rs` (pure, streaming, no clock of its own - every
+stamp it writes comes from the input lines) plus `tools/src/archive.rs` (gzip
+and retention). Full documentation is in `tools/README.md` under "Compaction";
+the short version:
 
-- `--compact` writes a second daily file next to the raw one (or replaces it):
-  - always: notes, status/hello/CAPTURE lines, every non-poll frame (writes,
-    acks, exceptions, unknown functions), BAD_CRC/SHORT frames, DROPPED
-    markers;
-  - poll requests that repeat the previous identical request: dropped;
-  - poll responses: written only when they differ from the last WRITTEN
-    response for that request, ignoring changes within a per-register
-    deadband (default 0; configure e.g. 0x001b:1, 0x001e:5, 0x0024:15);
-  - a full snapshot of every polled block every N minutes (default 5) and a
-    liveness line `POLL <slave> <start>x<count> n=<cycles> unchanged` so gaps
-    remain visible.
-- Raw logs: gzip at rotation, keep N days (default 14) for re-analysis.
-- `sniffer-analyze` must accept compact logs: a response that is absent means
-  "unchanged"; poll-period statistics come from the POLL counters.
+- `sniffer-capture run --compact` writes `compact-YYYY-MM-DD.log` next to the
+  raw file, same format and same midnight rotation. `--no-raw` drops the raw
+  file, `--deadband 0x001b:1,0x001e:5,0x0024:15` sets the per-register jitter
+  bands, `--snapshot` (default 300s), `--poll-gap` (10s), `--max-latency` (1s),
+  `--raw-keep-days` (14).
+- A recognised poll = read request (0x03/0x04, 4 data bytes, CRC OK) followed
+  within the pairing window by a response with byte count 2*count. Key =
+  (slave, func, start, count). It is dropped when the response matches the last
+  **written** response for that key within the deadbands (signed 16-bit), so
+  drift accumulates until it crosses the band. When it is written, both lines go
+  out verbatim.
+- Everything else is always kept: CAPTURE/NOTE, every `# ` line, all writes and
+  acks, exceptions, other functions, BAD_CRC, SHORT, DROPPED, unparseable lines.
+- Bookkeeping lines, all stamped like any other log line:
+  `COMPACT begin <settings>`, `COMPACT snapshot keys=N` (followed by the full
+  pair of every key still being polled, every 300 s),
+  `COMPACT poll slave=.. func=.. start=.. count=.. n=.. suppressed=..` (liveness
+  counter per key: polls since the previous counter line, and how many of them
+  were dropped) and `COMPACT gap ... len_ms=..` when a key resumes after >10 s.
+- Raw logs are gzipped at startup and at each rotation and the archives expire
+  after `--raw-keep-days`; the gzip runs on a blocking thread. Compact logs are
+  never compressed or deleted.
+- `sniffer-capture compact <in.log> [-o out.log]` does the same conversion
+  offline (`.gz` and `-` accepted) and prints the saving on stderr.
+- `sniffer-analyze` reads raw, compact and mixed input: COMPACT lines are never
+  "unparsed", poll counts and periods come from the counters where the raw polls
+  are gone, the liveness lines count as bus activity, and section 1 says the
+  input was compact and quotes the compactor's settings.
 
-Expected result: well under 10k lines per day.
+Verified on the real log (first 4 h of real bus, 40287 lines / 12.4 MB):
+8802 lines / 1.65 MB out, 21.8% of the lines and 13.3% of the bytes. 18460 polls
+counted, 16719 suppressed (90.6%). All 130 func=0x10 write lines, all 26 notes,
+all 2389 SHORT, all 213 BAD_CRC, all 169 `# status` and all 24 CAPTURE lines
+present byte-identically. `sniffer-analyze` on raw vs compact: identical address
+set (130), identical first/last/min/max on 128 of 130 addresses, byte-identical
+Writes table; the only differences are lost intermediate jitter on the three
+deadbanded registers (0x001b distinct 60 -> 59, 0x0024 68 -> 66) and the
+corresponding rows in the note-correlation windows.
+
+What still dominates the compact file is bus noise, not polls: 2389 SHORT and
+213 BAD_CRC lines in four hours. If the files need to shrink further, the next
+candidates for a deadband are the temperatures at 0x0010-0x001a (tenths of a
+degree, `:1` each) - 0x0013 alone changed 496 times in 9233 polls.
+
+`tools/systemd/modbus-sniffer-capture.service` now runs with
+`--compact --deadband 0x001b:1,0x001e:5,0x0024:15` and the default 14-day raw
+retention. It has NOT been installed or restarted on the user's machine.
 
 ## Next steps
 
 The controller work is in ../wfi028t-controller. Here:
 
-0. Log compaction (above).
+0. Log compaction is DONE (above). Left to do on the machine: install the new
+   `sniffer-capture` to /usr/local/bin and the updated unit, then restart the
+   service. Nothing was installed or restarted from the implementation session.
 
 Needs hardware, in order (items 1-2 largely DONE 2026-10-03: WiFi, hostname,
 TCP, replay, commands and a real bus all verified; takeover and AP power loss

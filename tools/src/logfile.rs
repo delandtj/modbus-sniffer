@@ -22,20 +22,36 @@ use chrono::{DateTime, FixedOffset, Local, NaiveDate, SecondsFormat};
 
 use crate::clock::Clock;
 
+/// File-name prefix of the raw daily logs.
+pub const RAW_PREFIX: &str = "capture";
+/// File-name prefix of the compacted daily logs.
+pub const COMPACT_PREFIX: &str = "compact";
+
 /// Stamp format used for every line in the log.
 pub fn format_stamp(t: DateTime<Local>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Millis, false)
 }
 
+/// The same stamp format for a time read back out of a log.
+pub fn format_time(t: DateTime<FixedOffset>) -> String {
+    t.to_rfc3339_opts(SecondsFormat::Millis, false)
+}
+
 /// File name for a given local day.
 pub fn file_name(day: NaiveDate) -> String {
-    format!("capture-{}.log", day.format("%Y-%m-%d"))
+    file_name_with_prefix(RAW_PREFIX, day)
+}
+
+/// File name for a given local day and file-name prefix.
+pub fn file_name_with_prefix(prefix: &str, day: NaiveDate) -> String {
+    format!("{prefix}-{}.log", day.format("%Y-%m-%d"))
 }
 
 /// Appends records to the current day's file, rotating at local midnight.
 pub struct LogWriter<C: Clock> {
     dir: PathBuf,
     clock: C,
+    prefix: String,
     open: Option<(NaiveDate, BufWriter<File>)>,
 }
 
@@ -44,8 +60,15 @@ impl<C: Clock> LogWriter<C> {
         Self {
             dir: dir.into(),
             clock,
+            prefix: RAW_PREFIX.to_string(),
             open: None,
         }
+    }
+
+    /// Write `<prefix>-YYYY-MM-DD.log` instead of `capture-YYYY-MM-DD.log`.
+    pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = prefix.into();
+        self
     }
 
     pub fn dir(&self) -> &Path {
@@ -55,6 +78,13 @@ impl<C: Clock> LogWriter<C> {
     /// Write one record: `<stamp> <text>`. `text` must not contain a newline;
     /// any trailing CR/LF from the device is stripped.
     pub fn write(&mut self, stamp: DateTime<Local>, text: &str) -> std::io::Result<()> {
+        let text = text.trim_end_matches(['\r', '\n']);
+        self.write_line(&format!("{} {}", format_stamp(stamp), text))
+    }
+
+    /// Write one already-stamped line verbatim. The file it lands in is still
+    /// chosen by the clock, so rotation is identical to [`Self::write`].
+    pub fn write_line(&mut self, line: &str) -> std::io::Result<()> {
         let today = self.clock.now().date_naive();
         let rotate = match &self.open {
             Some((day, _)) => *day != today,
@@ -65,14 +95,13 @@ impl<C: Clock> LogWriter<C> {
                 let _ = w.flush();
             }
             std::fs::create_dir_all(&self.dir)?;
-            let path = self.dir.join(file_name(today));
+            let path = self.dir.join(file_name_with_prefix(&self.prefix, today));
             let f = OpenOptions::new().create(true).append(true).open(path)?;
             self.open = Some((today, BufWriter::new(f)));
         }
 
         let (_, w) = self.open.as_mut().expect("just opened");
-        let text = text.trim_end_matches(['\r', '\n']);
-        writeln!(w, "{} {}", format_stamp(stamp), text)?;
+        writeln!(w, "{}", line.trim_end_matches(['\r', '\n']))?;
         // Flush per line: a multi-day capture that loses its tail to a crash is
         // worse than the cost of one write syscall per frame at 9600 baud.
         w.flush()

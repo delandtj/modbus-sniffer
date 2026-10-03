@@ -13,9 +13,11 @@ use tokio::net::{TcpStream, UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
+use crate::archive::{self, DEFAULT_RAW_KEEP_DAYS};
 use crate::clock::{epoch_millis, from_epoch_millis, Clock, SystemClock};
+use crate::compact::{CompactConfig, Compactor};
 use crate::device;
-use crate::logfile::LogWriter;
+use crate::logfile::{LogWriter, COMPACT_PREFIX};
 
 /// Default path of the control socket.
 pub const DEFAULT_CONTROL_PATH: &str = "/run/modbus-sniffer/ctl.sock";
@@ -48,6 +50,12 @@ pub struct CaptureConfig {
     pub control: Option<PathBuf>,
     /// Upper bound on the reconnect backoff.
     pub max_backoff: Duration,
+    /// Write the raw `capture-YYYY-MM-DD.log`.
+    pub raw: bool,
+    /// Also write a deduplicated `compact-YYYY-MM-DD.log` with these settings.
+    pub compact: Option<CompactConfig>,
+    /// Days of gzipped raw log to keep. Compact logs are never deleted.
+    pub raw_keep_days: u32,
 }
 
 impl Default for CaptureConfig {
@@ -57,6 +65,9 @@ impl Default for CaptureConfig {
             dir: PathBuf::from(DEFAULT_LOG_DIR),
             control: Some(PathBuf::from(DEFAULT_CONTROL_PATH)),
             max_backoff: Duration::from_secs(30),
+            raw: true,
+            compact: None,
+            raw_keep_days: DEFAULT_RAW_KEEP_DAYS,
         }
     }
 }
@@ -103,16 +114,18 @@ pub async fn run_with_clock<C: Clock + Clone>(cfg: CaptureConfig, clock: C) -> R
     // The writer uses blocking std::fs on a tokio task. At Modbus RTU rates the
     // line rate is a few hundred per second at most, so a flush per line costs
     // far less than the complexity of a spawn_blocking round trip per frame.
-    let (log_tx, mut log_rx) = mpsc::unbounded_channel::<(DateTime<Local>, String)>();
+    // Compressing a finished day is the one job too big for that, so it goes to
+    // spawn_blocking and the capture loop never waits for it.
+    let (log_tx, log_rx) = mpsc::unbounded_channel::<(DateTime<Local>, String)>();
     let sink = LogSink { tx: log_tx };
-    let mut writer = LogWriter::new(cfg.dir.clone(), clock.clone());
-    tokio::spawn(async move {
-        while let Some((stamp, text)) = log_rx.recv().await {
-            if let Err(e) = writer.write(stamp, &text) {
-                eprintln!("capture: log write failed: {e}");
-            }
-        }
-    });
+    tokio::spawn(writer_task(
+        log_rx,
+        cfg.dir.clone(),
+        cfg.raw,
+        cfg.compact.clone(),
+        cfg.raw_keep_days,
+        clock.clone(),
+    ));
 
     let (req_tx, mut req_rx) = mpsc::channel::<DeviceRequest>(64);
     if let Some(path) = &cfg.control {
@@ -136,6 +149,18 @@ pub async fn run_with_clock<C: Clock + Clone>(cfg: CaptureConfig, clock: C) -> R
         clock.now(),
         &format!("CAPTURE started, device {}", cfg.device),
     );
+    if let Some(c) = &cfg.compact {
+        sink.send(
+            clock.now(),
+            &format!(
+                "CAPTURE compacting to {}-YYYY-MM-DD.log, raw={}, deadband={}, raw_keep_days={}",
+                COMPACT_PREFIX,
+                if cfg.raw { "on" } else { "off" },
+                c.deadband_str(),
+                cfg.raw_keep_days
+            ),
+        );
+    }
 
     let mut state = DeviceState::default();
     let mut backoff = INITIAL_BACKOFF;
@@ -164,6 +189,75 @@ pub async fn run_with_clock<C: Clock + Clone>(cfg: CaptureConfig, clock: C) -> R
         drain_while_disconnected(&mut req_rx, &sink, &clock, backoff).await;
         backoff = (backoff * 2).min(cfg.max_backoff);
     }
+}
+
+/// The one task that touches the log files.
+///
+/// It owns the raw writer, the compactor and the compact writer, notices the
+/// day change itself (so housekeeping runs at the same moment the files rotate)
+/// and hands the gzip work to a blocking thread.
+async fn writer_task<C: Clock + Clone>(
+    mut rx: mpsc::UnboundedReceiver<(DateTime<Local>, String)>,
+    dir: PathBuf,
+    raw: bool,
+    compact: Option<CompactConfig>,
+    raw_keep_days: u32,
+    clock: C,
+) {
+    let mut raw_writer = raw.then(|| LogWriter::new(dir.clone(), clock.clone()));
+    let mut compact_writer = compact
+        .as_ref()
+        .map(|_| LogWriter::new(dir.clone(), clock.clone()).with_prefix(COMPACT_PREFIX));
+    let mut compactor = compact.map(Compactor::new);
+    let mut lines: Vec<String> = Vec::new();
+
+    let mut day = clock.now().date_naive();
+    // At startup, not only at rotation: a daemon that was down over midnight
+    // would otherwise leave yesterday's raw log uncompressed until tomorrow.
+    spawn_housekeeping(dir.clone(), day, raw_keep_days);
+
+    while let Some((stamp, text)) = rx.recv().await {
+        let today = clock.now().date_naive();
+        if today != day {
+            day = today;
+            if let Some(c) = compactor.as_mut() {
+                c.restart_header();
+            }
+            spawn_housekeeping(dir.clone(), day, raw_keep_days);
+        }
+
+        if let Some(w) = raw_writer.as_mut() {
+            if let Err(e) = w.write(stamp, &text) {
+                eprintln!("capture: log write failed: {e}");
+            }
+        }
+        if let (Some(c), Some(w)) = (compactor.as_mut(), compact_writer.as_mut()) {
+            lines.clear();
+            let text = text.trim_end_matches(['\r', '\n']);
+            c.push(
+                &format!("{} {}", crate::logfile::format_stamp(stamp), text),
+                &mut lines,
+            );
+            for line in &lines {
+                if let Err(e) = w.write_line(line) {
+                    eprintln!("capture: compact log write failed: {e}");
+                }
+            }
+        }
+    }
+}
+
+/// Gzip the finished raw days and drop the expired archives, off the hot path.
+fn spawn_housekeeping(dir: PathBuf, today: chrono::NaiveDate, keep_days: u32) {
+    tokio::task::spawn_blocking(move || match archive::run(&dir, today, keep_days) {
+        Ok(plan) if !plan.is_empty() => eprintln!(
+            "capture: archived {} raw log(s), deleted {} expired archive(s)",
+            plan.gzip.len(),
+            plan.delete.len()
+        ),
+        Ok(_) => {}
+        Err(e) => eprintln!("capture: raw log housekeeping failed: {e:#}"),
+    });
 }
 
 /// Read one connection to exhaustion, forwarding commands while it lasts.

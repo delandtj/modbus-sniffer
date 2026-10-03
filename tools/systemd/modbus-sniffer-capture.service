@@ -9,9 +9,20 @@ Type=simple
 ExecStart=/usr/local/bin/sniffer-capture run \
     --device modbus-sniffer:4000 \
     --dir /var/lib/modbus-sniffer \
-    --control /run/modbus-sniffer/ctl.sock
+    --control /run/modbus-sniffer/ctl.sock \
+    --compact \
+    --deadband 0x001b:1,0x001e:5,0x0024:15
 Restart=always
 RestartSec=5s
+
+# --compact adds compact-YYYY-MM-DD.log next to the raw capture-YYYY-MM-DD.log:
+# the same format with the repeated poll traffic folded away (about a seventh of
+# the bytes, and much better once the controller settles). The deadbands are the
+# three registers measured to jitter on every poll: 0x001b compressor Hz (+-1),
+# 0x001e DC bus volts (a few V), 0x0024 fan rpm (tens).
+# The raw log is kept as well, gzipped at the first rotation after its day ends
+# and deleted after --raw-keep-days (default 14). Compact logs are never
+# deleted. Add --no-raw if the disk ever becomes the problem.
 
 # The daemon reconnects on its own, so a restart here only ever happens after a
 # real crash; losing nothing matters more than restarting fast.

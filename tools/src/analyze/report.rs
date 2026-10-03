@@ -6,7 +6,7 @@ use chrono::{SecondsFormat, TimeDelta};
 use modbus_sniffer_core as mb;
 
 use super::pair::{pair, Paired};
-use super::parse::{Capture, Time};
+use super::parse::{Capture, CompactCounters, Time};
 use super::regs::{
     decode, median, spread, writes_between, Decoded, ReadKey, RegKind, RegStats, WriteOp,
 };
@@ -32,7 +32,7 @@ pub fn report(cap: &Capture, opts: &Options) -> String {
     let _ = writeln!(out, "# Modbus RTU protocol map\n");
     section_overview(&mut out, cap, &paired, gap);
     section_roles(&mut out, cap, &paired, &decoded);
-    section_polling(&mut out, &decoded);
+    section_polling(&mut out, cap, &decoded);
     section_registers(&mut out, &decoded);
     section_notes(&mut out, cap, &decoded, window);
     section_anomalies(&mut out, cap, &paired, &decoded);
@@ -76,6 +76,35 @@ fn section_overview(out: &mut String, cap: &Capture, paired: &Paired, gap: TimeD
         cap.dropped.len()
     );
     let _ = writeln!(out, "- Device reboots: {}", cap.reboots.len());
+    if cap.compact.seen {
+        let counters = cap.compact.counters();
+        let polls: u64 = counters.values().map(|c| c.polls).sum();
+        let suppressed: u64 = counters.values().map(|c| c.suppressed).sum();
+        let _ = writeln!(
+            out,
+            "- Input kind: **compact** - {} `COMPACT` bookkeeping line(s) were found, so \
+             this log has had its repeated poll traffic folded away.",
+            cap.compact.begins.len()
+                + cap.compact.snapshots.len()
+                + cap.compact.polls.len()
+                + cap.compact.gaps.len()
+        );
+        let _ = writeln!(
+            out,
+            "- Polls counted by the compactor: {polls}, of which {suppressed} were dropped as \
+             unchanged. Register values below come only from the responses that were kept; a \
+             missing response means \"the same as the one before it, within the deadband\"."
+        );
+        for (t, settings) in cap.compact.begins.iter().take(MAX_ROWS) {
+            let _ = writeln!(
+                out,
+                "- Compactor settings from {}: `{settings}`",
+                fmt_time(*t)
+            );
+        }
+    } else {
+        let _ = writeln!(out, "- Input kind: raw (no `COMPACT` lines)");
+    }
     let _ = writeln!(
         out,
         "- Request/response exchanges: {}",
@@ -148,6 +177,43 @@ fn section_overview(out: &mut String, cap: &Capture, paired: &Paired, gap: TimeD
             let _ = writeln!(out, "\nand {} more.", gaps.len() - MAX_ROWS);
         }
         let _ = writeln!(out);
+    }
+
+    if cap.compact.seen {
+        let _ = writeln!(
+            out,
+            "On a compact log the `COMPACT poll` and `COMPACT snapshot` lines count as bus \
+             activity, because the traffic they stand for was really there. Silence between \
+             them is therefore bounded below by the compactor's snapshot interval; the \
+             compactor's own per-block gap markers are the precise answer.\n"
+        );
+        let _ = writeln!(out, "### Gaps reported by the compactor\n");
+        if cap.compact.gaps.is_empty() {
+            let _ = writeln!(out, "None.\n");
+        } else {
+            let _ = writeln!(
+                out,
+                "| Resumed at | Slave | Function | Start | Count | Length |"
+            );
+            let _ = writeln!(out, "|---|---|---|---|---|---|");
+            for g in cap.compact.gaps.iter().take(MAX_ROWS) {
+                let _ = writeln!(
+                    out,
+                    "| {} | 0x{:02x} | 0x{:02x} {} | 0x{:04x} | {} | {} |",
+                    fmt_time(g.time),
+                    g.key.slave,
+                    g.key.func,
+                    mb::format_function(g.key.func),
+                    g.key.start,
+                    g.key.count,
+                    fmt_ms(g.len_ms)
+                );
+            }
+            if cap.compact.gaps.len() > MAX_ROWS {
+                let _ = writeln!(out, "\nand {} more.", cap.compact.gaps.len() - MAX_ROWS);
+            }
+            let _ = writeln!(out);
+        }
     }
 }
 
@@ -252,26 +318,52 @@ fn section_roles(out: &mut String, cap: &Capture, paired: &Paired, decoded: &Dec
 // 3. Polling loop
 // ---------------------------------------------------------------------------
 
-fn section_polling(out: &mut String, decoded: &Decoded) {
+fn section_polling(out: &mut String, cap: &Capture, decoded: &Decoded) {
     let _ = writeln!(out, "## 3. Polling loop\n");
-    if decoded.reads.is_empty() {
+    let counters = cap.compact.counters();
+    if decoded.reads.is_empty() && counters.is_empty() {
         let _ = writeln!(out, "No read requests were seen.\n");
         return;
     }
 
-    let mut rows: Vec<(&ReadKey, &super::regs::ReadStats)> = decoded.reads.iter().collect();
-    rows.sort_by_key(|(_, s)| std::cmp::Reverse(s.times.len()));
+    // A key can appear in the compactor's counters without a single surviving
+    // request line, so the row set is the union of both.
+    let mut keys: Vec<ReadKey> = decoded.reads.keys().copied().collect();
+    for k in counters.keys() {
+        if !keys.contains(k) {
+            keys.push(*k);
+        }
+    }
+    let empty = super::regs::ReadStats::default();
+    let mut rows: Vec<(ReadKey, &super::regs::ReadStats, CompactCounters)> = keys
+        .into_iter()
+        .map(|k| {
+            (
+                k,
+                decoded.reads.get(&k).unwrap_or(&empty),
+                counters.get(&k).copied().unwrap_or_default(),
+            )
+        })
+        .collect();
+    rows.sort_by_key(|(_, s, c)| std::cmp::Reverse(c.polls.max(s.times.len() as u64)));
 
-    let _ = writeln!(
-        out,
-        "| Slave | Function | Start | Count | Requests | Period min/median/max | Latency min/median/max | Answered | Exceptions | Unanswered |"
-    );
-    let _ = writeln!(out, "|---|---|---|---|---|---|---|---|---|---|");
-    for (k, s) in rows.iter().take(MAX_ROWS) {
-        let intervals = s.intervals_ms();
+    if cap.compact.seen {
         let _ = writeln!(
             out,
-            "| 0x{:02x} | 0x{:02x} {} | 0x{:04x} ({}) | {} | {} | {} | {} | {} | {} | {} |",
+            "`Requests` counts the request lines still in the log; `Polls` is what the \
+             compactor counted, suppressed ones included, and `Period` is derived from it \
+             over the span the counters cover. On a raw log the two agree.\n"
+        );
+    }
+    let _ = writeln!(
+        out,
+        "| Slave | Function | Start | Count | Requests | Polls | Suppressed | Period min/median/max | Latency min/median/max | Answered | Exceptions | Unanswered |"
+    );
+    let _ = writeln!(out, "|---|---|---|---|---|---|---|---|---|---|---|---|");
+    for (k, s, c) in rows.iter().take(MAX_ROWS) {
+        let _ = writeln!(
+            out,
+            "| 0x{:02x} | 0x{:02x} {} | 0x{:04x} ({}) | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             k.slave,
             k.func,
             mb::format_function(k.func),
@@ -279,7 +371,9 @@ fn section_polling(out: &mut String, decoded: &Decoded) {
             k.start,
             k.count,
             s.times.len(),
-            fmt_spread(&intervals),
+            c.polls.max(s.times.len() as u64),
+            c.suppressed,
+            fmt_period(s, c),
             fmt_spread(&s.latency_ms),
             s.responses,
             s.exceptions,
@@ -291,9 +385,8 @@ fn section_polling(out: &mut String, decoded: &Decoded) {
     }
 
     // The dominant request is the best starting point for a replacement master.
-    if let Some((k, s)) = rows.first() {
-        let intervals = s.intervals_ms();
-        if let Some(m) = median(&intervals) {
+    if let Some((k, s, c)) = rows.first() {
+        if let Some(m) = period_ms(s, c) {
             let _ = writeln!(
                 out,
                 "\nThe busiest request is slave 0x{:02x} function 0x{:02x} from 0x{:04x} for {} \
@@ -307,6 +400,37 @@ fn section_polling(out: &mut String, decoded: &Decoded) {
         }
     }
     let _ = writeln!(out);
+}
+
+/// Period of one polled block in milliseconds.
+///
+/// On a raw log it is the median interval between consecutive requests. On a
+/// compact log most requests are gone, so it is the span the `COMPACT poll`
+/// counters cover divided by the polls they counted.
+fn period_ms(s: &super::regs::ReadStats, c: &CompactCounters) -> Option<i64> {
+    let intervals = s.intervals_ms();
+    if c.polls > s.times.len() as u64 {
+        if let (Some(a), Some(b)) = (c.first, c.last) {
+            if c.polls > 1 {
+                let span = (b - a).num_milliseconds();
+                if span > 0 {
+                    return Some(span / (c.polls as i64 - 1));
+                }
+            }
+        }
+    }
+    median(&intervals)
+}
+
+fn fmt_period(s: &super::regs::ReadStats, c: &CompactCounters) -> String {
+    let intervals = s.intervals_ms();
+    if c.polls > s.times.len() as u64 {
+        return match period_ms(s, c) {
+            Some(m) => format!("~{} (mean)", fmt_ms(m)),
+            None => "-".to_string(),
+        };
+    }
+    fmt_spread(&intervals)
 }
 
 // ---------------------------------------------------------------------------
@@ -896,6 +1020,50 @@ mod tests {
         let md = render(&[], Duration::from_secs(10));
         assert!(md.contains("the log held no timestamped lines"), "{md}");
         assert!(md.contains("No read requests were seen."), "{md}");
+    }
+
+    /// The compact log of the same traffic has to produce the same register
+    /// values, and has to recover the poll count from the counters.
+    #[test]
+    fn a_compact_log_reports_itself_and_keeps_the_poll_count() {
+        let raw: Vec<String> = {
+            let mut v = Vec::new();
+            for i in 0..20u32 {
+                let at = format!("2026-10-03T10:{:02}:{:02}", i / 60, i % 60);
+                v.push(format!(
+                    "{at}.000+02:00 [{i}.000] RX slave=0x01 func=0x03 (r) data=00 64 00 02 crc=0x0 computed=0x0 OK"
+                ));
+                v.push(format!(
+                    "{at}.020+02:00 [{i}.020] RX slave=0x01 func=0x03 (r) data=04 00 dc 00 01 crc=0x0 computed=0x0 OK"
+                ));
+            }
+            v
+        };
+        let (compacted, stats) = crate::compact::compact_lines(
+            raw.iter().map(String::as_str),
+            crate::compact::CompactConfig {
+                snapshot: std::time::Duration::ZERO,
+                gap: std::time::Duration::ZERO,
+                ..Default::default()
+            },
+        );
+        assert_eq!(stats.suppressed, 19, "{compacted:#?}");
+
+        let refs: Vec<&str> = compacted.iter().map(String::as_str).collect();
+        let md = render(&refs, Duration::from_secs(10));
+        assert!(md.contains("- Input kind: **compact**"), "{md}");
+        assert!(md.contains("- Unparsed lines: 0"), "{md}");
+        // One surviving request, but all 20 polls are still accounted for.
+        assert!(md.contains("| 1 | 20 | 19 |"), "{md}");
+        assert!(md.contains("~1.000 s (mean)"), "{md}");
+        // And the register values match the raw log's.
+        let raw_refs: Vec<&str> = raw.iter().map(String::as_str).collect();
+        let raw_md = render(&raw_refs, Duration::from_secs(10));
+        assert!(raw_md.contains("- Input kind: raw"), "{raw_md}");
+        for md in [&md, &raw_md] {
+            assert!(md.contains("| 0x0064 (100) |"), "{md}");
+            assert!(md.contains("| 220 | 220 | 22.0 |"), "{md}");
+        }
     }
 
     #[test]

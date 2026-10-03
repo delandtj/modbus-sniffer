@@ -4,8 +4,8 @@ Two binaries for the always-on Linux server that sits next to the sniffer:
 
 | Binary | Job |
 |---|---|
-| `sniffer-capture` | long-running daemon: one TCP connection to the sniffer, one log file per local day, wall-clock stamps, plus a control socket for notes |
-| `sniffer-analyze` | reads those logs back and writes a markdown protocol map |
+| `sniffer-capture` | long-running daemon: one TCP connection to the sniffer, one log file per local day, wall-clock stamps, a control socket for notes, and optional log compaction |
+| `sniffer-analyze` | reads those logs back (raw, compact or both) and writes a markdown protocol map |
 
 A third binary, `fake-device`, speaks the device protocol over TCP so both of the
 above can be exercised with no hardware attached.
@@ -73,6 +73,11 @@ sudo systemctl enable --now modbus-sniffer-capture
 
 Edit `--device` in the unit if your sniffer is not reachable as
 `modbus-sniffer:4000`.
+
+The unit runs with `--compact --deadband 0x001b:1,0x001e:5,0x0024:15`, so it
+writes both `capture-YYYY-MM-DD.log` and `compact-YYYY-MM-DD.log` and keeps 14
+days of gzipped raw log. See [Compaction](#compaction) for what that does and
+when to add `--no-raw`.
 
 `StateDirectory=modbus-sniffer` gives the logs `/var/lib/modbus-sniffer`, and
 `RuntimeDirectory=modbus-sniffer` gives the socket `/run/modbus-sniffer/ctl.sock`
@@ -154,6 +159,117 @@ across files, so this never matters in practice.
 Writes are flushed per line: a multi-day capture that loses its tail to a power
 cut is a worse outcome than one write syscall per frame at 9600 baud.
 
+## Compaction
+
+The heat pump controller re-reads the same two register blocks every second, so
+a raw day is about 346k lines / 108 MiB of which almost all is a byte-identical
+repeat. `--compact` writes a second daily file, `compact-YYYY-MM-DD.log`, in
+**exactly the same line format**, so every tool here (and every `grep` you
+already have) keeps working on it.
+
+```bash
+sniffer-capture run --dir /var/lib/modbus-sniffer \
+    --compact --deadband 0x001b:1,0x001e:5,0x0024:15
+```
+
+What always survives into the compact log:
+
+- `CAPTURE ...` and `NOTE ...` daemon lines and every `# ` device line (hello,
+  bus, note, status, ok/err) - they are rare, and each one is a fact about the
+  capture;
+- every frame that is not part of a recognised poll: writes (0x05, 0x06, 0x0f,
+  0x10) and their acks, exceptions, other function codes, reads of other
+  ranges, and read requests that never got an answer;
+- `BAD_CRC` and `SHORT` lines, `[DROPPED n ...]` markers, and any line the
+  parser cannot read at all.
+
+A **recognised poll** is a read request (function 0x03 or 0x04, body exactly
+`start(2) + count(2)`, CRC OK) followed within `--max-latency` by a response on
+the same slave and function whose byte count is `2 * count`. Its identity is the
+key `(slave, func, start, count)`. Anything between the request and its
+response (a `# status` line, a noise frame) makes the compactor keep that pair
+verbatim rather than guess.
+
+A recognised poll is **dropped** when its response equals the last response
+*written* for that key. A register listed in `--deadband` counts as equal while
+`|new - last_written| <= band`, compared as signed 16-bit. Comparing against the
+last written value, not the previous one, is what makes slow drift visible: the
+deviation accumulates until it crosses the band and the pair is written. When a
+pair is written, **both** lines go out, byte for byte as they arrived.
+
+### The COMPACT lines
+
+Four bookkeeping lines keep the folded-away traffic visible. They are ordinary
+stamped log lines, and `sniffer-analyze` understands all four:
+
+```text
+<ts> COMPACT begin deadband=0x001b:1,0x001e:5,0x0024:15 snapshot=300s gap=10s window=1s
+<ts> COMPACT snapshot keys=2
+<ts> COMPACT poll slave=0x01 func=0x03 start=0x0000 count=63 n=300 suppressed=299
+<ts> COMPACT gap slave=0x01 func=0x03 start=0x0000 count=63 len_ms=42500
+```
+
+- **begin** - first line of the output and of every daily file after a
+  rotation; records the settings that produced the file.
+- **snapshot** - every `--snapshot` interval (default `300s`, `0s` disables),
+  followed by the latest request+response pair in full, regardless of change,
+  for every key polled since the previous snapshot. So the whole bus state can
+  be reconstructed from any point in the file. A key that has stopped being
+  polled is not resurrected, and a pair already in the output just above is not
+  repeated - a duplicated frame line would be counted twice by every reader.
+- **poll** - the liveness counter: `n` polls of this key since the previous
+  `poll` line for it, of which `suppressed` were dropped. One is written
+  whenever a key's pair is written, once per key per snapshot, and once per key
+  at end of input, so no poll goes uncounted.
+- **gap** - written when a key that had been polling resumes after more than
+  `--poll-gap` (default `10s`) of silence. The pair after a gap is always
+  written in full, because a value after a silence is never a safe "unchanged".
+
+### Options
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--compact` | off | also write `compact-YYYY-MM-DD.log` |
+| `--no-raw` | off | skip the raw log (only allowed with `--compact`) |
+| `--deadband <reg>:<band>,...` | none | repeatable; `0x` prefix for hex, decimal otherwise |
+| `--snapshot <dur>` | `300s` | full restatement interval, `0s` to disable |
+| `--poll-gap <dur>` | `10s` | silence per key that gets a `COMPACT gap` line |
+| `--max-latency <dur>` | `1s` | pairing window for request -> response |
+| `--raw-keep-days <n>` | `14` | days of gzipped raw log to keep |
+
+### Raw log retention
+
+At startup and at every midnight rotation the daemon gzips the `capture-*.log`
+files of days before today (about 35x: 108 MiB -> ~3 MiB) and deletes
+`capture-*.log.gz` older than `--raw-keep-days`. The compression runs on a
+blocking thread, so it never stalls the capture loop, and **compact logs are
+never compressed or deleted** - they are the long-term record.
+
+### Compacting an existing log
+
+```bash
+sniffer-capture compact /var/lib/modbus-sniffer/capture-2026-10-03.log \
+    -o /tmp/compact-2026-10-03.log \
+    --deadband 0x001b:1,0x001e:5,0x0024:15
+```
+
+`.gz` input is unpacked on the fly and `-` reads standard input; without `-o`
+the result goes to standard output. The summary goes to stderr:
+
+```text
+sniffer-capture: 40287 lines / 12396466 bytes in, 8802 lines / 1653044 bytes out (21.8% of the lines, 13.3% of the bytes)
+sniffer-capture: 18460 polls, 16719 suppressed, 301 unanswered read requests, 32 snapshots, 0 gaps, 0 unparsed lines kept
+```
+
+Measured on the first four hours of real bus traffic with the deadbands above:
+the settings block (0x003f, 67 registers) collapsed from 9230 polls to 19
+written pairs (54 request lines once the snapshot restatements are counted), the
+status block (0x0000, 63 registers) from 9229 polls to 1721 pairs (1752). The
+2389 `SHORT` noise frames and 213 `BAD_CRC` frames in that log are all kept, and
+they are what dominates the remaining line count. The next registers worth a
+deadband, if the files are still too big, are the temperatures around
+0x0010-0x001a (tenths of a degree, so `:1` each).
+
 ## The report
 
 ```bash
@@ -164,21 +280,33 @@ Options: `--window` (half-width of the note correlation window, default `10s`),
 `--max-latency` (how long a request stays open waiting for its response, default
 `1s`), `--gap` (bus silence worth reporting, default `30s`).
 
+Raw logs, compact logs and a mixture of both can be fed in together; files are
+sorted by time across the whole input. Section 1 says which kind it got.
+
 Sections:
 
 1. **Overview** - time span, CRC-OK / BAD_CRC / SHORT counts, drop markers, bus
-   settings seen, reboots, silent gaps.
+   settings seen, reboots, silent gaps. On a compact log it also reports the
+   compactor's settings, the polls it counted and how many it dropped, and the
+   `COMPACT gap` markers; the `COMPACT poll` / `COMPACT snapshot` lines count as
+   bus activity, because the traffic they stand for really was there.
 2. **Roles** - how requests were paired with responses, per-slave counts, and
    which addresses the master polls. The sniffer taps one wire and cannot see
    direction, so roles come from PDU shape plus order.
 3. **Polling loop** - every `(slave, function, start address, count)` read
    request with its occurrence count, request period (min/median/max) and
    response latency (min/median/max). This is the table you reproduce when your
-   own device takes over as master.
+   own device takes over as master. On a compact log `Requests` is what survived
+   in the file, `Polls`/`Suppressed` come from the `COMPACT poll` counters, and
+   the period is their mean over the span those counters cover.
 4. **Register map** - every address seen, split into *changing*, *free-running*
    and *constant*. Values are shown as hex, u16, s16 and `/10`, because a Tuya
    heat-pump controller usually stores a temperature as tenths of a degree.
-   Writes (0x05, 0x06, 0x0F, 0x10) are listed separately with timestamps.
+   Writes (0x05, 0x06, 0x0F, 0x10) are listed separately with timestamps. On a
+   compact log the values come from the responses that were kept, so a
+   deadbanded register loses its intermediate wobble: the same addresses, the
+   same first and last values, fewer samples and a slightly smaller *distinct*
+   count.
 5. **Notes correlation** - the useful one. For each note, every write and every
    register transition inside the window, old -> new. Registers that move on more
    than half the polls (counters, uptimes, live temperatures) are summarised
@@ -217,6 +345,14 @@ invent registers.
    sniffer-analyze /var/lib/modbus-sniffer/capture-*.log --out map.md
    ```
 
+   Days whose raw log has already been gzipped and expired live on in the
+   compact logs, so for a long history use those (or both - the analyzer sorts
+   across files and marks the input as compact):
+
+   ```bash
+   sniffer-analyze /var/lib/modbus-sniffer/compact-*.log --out map.md
+   ```
+
 5. Read section 5 first: it names the register behind each setting. Then section
    3, which is the poll loop your replacement device has to imitate. Section 4
    tells you which registers are worth reading at all.
@@ -253,3 +389,12 @@ carried them), note forwarding, the local fallback when the device is gone,
 reconnect after the device disappears, reboot detection, midnight rotation with
 an injected clock, and request/response pairing, register tracking and note
 correlation on synthetic logs.
+
+Compaction has its own unit tests: dedup of identical polls, deadband behaviour
+including drift that accumulates past the band relative to the last written
+value, signed comparison across zero, snapshot cadence and contents, the poll
+counters adding up to the polls seen, gap detection, "writes, notes and damaged
+frames are always kept", request and response written together, and the gzip /
+retention plan against an injected date and a temp dir. Two end-to-end tests run
+the daemon with `--compact` and with `--no-raw` against the fake device and feed
+the result back through the analyzer.
