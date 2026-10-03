@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "fw-stm32f411"]
+members = ["core", "fw-stm32f411", "fw-esp32c6"]
 
 [profile.release]
 opt-level = "z"

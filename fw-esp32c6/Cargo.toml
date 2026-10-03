@@ -1,0 +1,21 @@
+[package]
+name = "sniffer-esp32c6"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+selftest = []
+
+[dependencies]
+embassy-executor = "0.10.0"
+embassy-futures = "0.1.2"
+embassy-time = "0.5.1"
+embedded-io-async = "0.7"
+esp-backtrace = { version = "0.20.0", features = ["esp32c6", "panic-handler", "println"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c6"] }
+esp-hal = { version = "1.2.2", features = ["esp32c6", "unstable"] }
+esp-println = { version = "0.18", default-features = false, features = ["critical-section", "esp32c6", "jtag-serial"] }
+esp-rtos = { version = "0.4.0", features = ["esp32c6", "embassy"] }
+heapless = "0.8.0"
+modbus-sniffer-core = { version = "0.1.0", path = "../core" }

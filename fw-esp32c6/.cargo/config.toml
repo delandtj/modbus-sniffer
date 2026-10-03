@@ -1,0 +1,15 @@
+[target.riscv32imac-unknown-none-elf]
+# The ESP32-C6-DevKitC-1 is flashed through the port labelled "USB" (the chip's
+# own USB-Serial-JTAG), not the one labelled "UART".
+runner = "espflash flash --monitor --chip esp32c6"
+rustflags = [
+  # esp-hal's build script drops its linker scripts in OUT_DIR; linkall.x pulls
+  # in memory.x, esp32c6.x and hal-defaults.x.
+  "-C", "link-arg=-Tlinkall.x",
+  # Required by esp-backtrace on RISC-V: without frame pointers a panic can only
+  # produce a raw stack dump that needs external tooling to decode.
+  "-C", "force-frame-pointers",
+]
+
+[build]
+target = "riscv32imac-unknown-none-elf"
