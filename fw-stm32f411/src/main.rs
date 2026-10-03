@@ -207,6 +207,12 @@ async fn sniffer_task(
     uart_cfg.baudrate = BAUD_RATE;
     uart_cfg.parity = embassy_stm32::usart::Parity::ParityEven;
     uart_cfg.stop_bits = embassy_stm32::usart::StopBits::STOP1;
+    // Wake ring-buffered reads on every received byte, not only on idle line or
+    // DMA half/full. frame_receiver restarts its t3.5 timer each time a read
+    // returns, so without this the read stays pending mid-frame, the timer
+    // fires while bytes are still arriving, and frames get split. The same bug
+    // was found and fixed on the ESP32-C6 firmware with real RS-485 traffic.
+    uart_cfg.eager_reads = Some(1);
 
     let rx = UartRx::new(usart, rx_pin, dma, Irqs, uart_cfg).unwrap();
 
