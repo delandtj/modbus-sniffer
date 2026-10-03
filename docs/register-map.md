@@ -83,6 +83,89 @@ master is used ("If adopt Modbus, the controller should be unplug to the PCB").
 | 0x0020 | 8..10 | compressor current (A)? |
 | 0x0024 | 706..859 | fan speed (r/min)? |
 
+## Target: ESPHome replacement controller
+
+The replacement is an ESPHome device using `modbus_controller` as the bus
+master, with the stock controller unplugged. The entity list follows the
+manual's feature set. Status column: **confirmed** = verified on this bus,
+**likely** = strong evidence but not proven, **to map** = register unknown.
+Update a row when its register is confirmed.
+
+### Controls
+
+| Entity | ESPHome type | Register | Status |
+|---|---|---|---|
+| Power | `switch` | 0x003f bit 0 | confirmed on (=1); off not yet captured |
+| Mode: heating / cooling / auto | `select` | 0x0040 (1 / 2 / 7) | confirmed for heating (1) |
+| Boost (full power) vs ECO | `switch` | 0x003f bit 6, inverted (0 = boost) | confirmed |
+| Heating setpoint P01 (8-40 C) | `number` | 0x0042? (27 = factory default) | likely |
+| Cooling setpoint P02 (8-28 C) | `number` | settings block | to map |
+| Auto setpoint P03 (8-40 C) | `number` | settings block | to map |
+| Restart hysteresis P04 (1-18 C) | `number` | settings block | to map |
+| Stop at target P05 (0 = non stop, 1 = stop) | `switch` | settings block | to map |
+| Manual defrost | `button` | unknown, maybe a command bit | to map (may not exist on the bus) |
+
+### Sensors (manual A01-A14, "Parameter checking" menu)
+
+| Entity | Unit | Register | Status |
+|---|---|---|---|
+| A01 inlet water temp. | C | status block | to map |
+| A02 outlet water temp. | C | status block | to map |
+| A03 ambient temp. | C | status block | to map |
+| A04 exhaust temp. | C | 0x0014? | to map |
+| A05 gas return temp. | C | status block | to map |
+| A06 outer piping temp. | C | status block | to map |
+| A07 inner piping temp. | C | status block | to map |
+| A08 EEV aperture | steps | status block | to map |
+| A09 compressor current | A | 0x0020? | to map |
+| A10 radiator temp. | C | status block | to map |
+| A11 supply voltage | V | status block | to map |
+| A12 compressor frequency | Hz | 0x001a? | to map |
+| A13 fan motor speed | r/min | 0x0024? | to map |
+| A14 fan motor speed (2nd) | r/min | status block | to map |
+
+Mapping method: on the controller, hold the button 3 s for "Parameter
+checking", step through A01-A14 and note each value with the time; match
+against the status block polled at that moment. This also settles the
+temperature scaling (whole degrees vs x10).
+
+### Status and alarms
+
+| Entity | ESPHome type | Register | Status |
+|---|---|---|---|
+| Boost active (heat pump confirmation) | `binary_sensor` | 0x0004 bit 7 | confirmed |
+| Compressor running | `binary_sensor` | status block | to map |
+| Defrosting | `binary_sensor` | status block | to map (wait for a defrost) |
+| Water flow alarm | `binary_sensor` | status block | to map |
+| Any fault | `binary_sensor` | status block | to map |
+| Active error code + description | `text_sensor` | status block | to map |
+| Modbus link status, raw status words | diagnostics | - | ESPHome built-in / raw reads |
+
+Error codes from the manual for the `text_sensor` lookup: water flow
+protection, E04 antifreeze, E05 high pressure, E06 low pressure, E09
+controller-PCB link, E10 PCB-driver link, E12 exhaust temp. too high, E15
+inlet water sensor, E16 outer piping sensor, E18 exhaust sensor, E20 inverter
+module, E21 ambient sensor, E23 overcooling (cooling mode), E27 outlet water
+sensor, E29, E33, E42, E46 DC fan motor (see the manual for the full text).
+
+### Left to Home Assistant, not on the device
+
+Clock, the three timer groups (become HA automations), factory reset, the
+WiFi icon (Tuya module, no longer relevant).
+
+### Replacement design constraints
+
+- **Poll like the original:** both blocks every second. The heat pump probably
+  raises E09 when the master goes quiet; untested how long it tolerates.
+- **Partial writes are unverified.** The stock controller always writes the
+  whole 67-register settings block (function 0x10, three times, 500 ms apart).
+  ESPHome writes single registers (0x06, or 0x10 with count 1 under
+  `use_write_multiple`). The WFI sheet lists 0x06, but test it on this board
+  first. Fallback: a lambda that rewrites the whole block like the original.
+- **No climate platform in `modbus_controller`:** a thermostat card needs an
+  ESPHome external component or an HA-side template; plain entities work
+  without it.
+
 ## Open questions
 
 - Setpoints P01-P05, timers, clock, auto mode: change each on the controller
