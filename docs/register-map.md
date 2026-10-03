@@ -57,7 +57,7 @@ Setpoints in the settings block are whole degrees (unlike the sensors).
 
 | Register | Bits / values | Meaning | Evidence |
 |---|---|---|---|
-| 0x003f | bit 0 | 1 = unit on, 0 = off | WFI sheet; capture shows 1 while running (OFF not yet captured) |
+| 0x003f | bit 0 | 1 = unit on, 0 = off | capture 15:52:40 off (0x1061->0x1060) and 15:53:15 on |
 | 0x003f | bit 6 | 1 = normal/ECO, 0 = full power (BOOST) | capture 14:52:47-14:53:53, four toggles; WFI sheet says boost is 0x0040 bit 4, which did NOT change |
 | 0x0040 | value | 1 = heating, 2 = cooling, 7 = auto | WFI sheet; capture shows 1 while in heating |
 | 0x0004 | bit 7 | set while full power is active (heat pump's confirmation) | capture, follows every 0x003f bit 6 toggle |
@@ -84,7 +84,7 @@ Update a row when its register is confirmed.
 
 | Entity | ESPHome type | Register | Status |
 |---|---|---|---|
-| Power | `switch` | 0x003f bit 0 | confirmed on (=1); off not yet captured |
+| Power | `switch` | 0x003f bit 0 | confirmed (off/on 15:52-15:53) |
 | Mode: heating / cooling / auto | `select` | 0x0040 (1 / 2 / 7) | confirmed for heating (1) |
 | Boost (full power) vs ECO | `switch` | 0x003f bit 6, inverted (0 = boost) | confirmed |
 | Heating setpoint P01 (8-40 C) | `number` | 0x0041, whole degrees | confirmed (33->34->33) |
@@ -138,7 +138,10 @@ while running), and the 0x7fff "not present" slots 0x0016, 0x0017, 0x0019,
 | Entity | ESPHome type | Register | Status |
 |---|---|---|---|
 | Boost active (heat pump confirmation) | `binary_sensor` | 0x0004 bit 7 | confirmed |
-| Compressor running | `binary_sensor` | status block | to map |
+| Unit on (heat pump confirmation) | `binary_sensor` | 0x0005 bit 7 | likely (followed off/on 15:52-15:53 instantly) |
+| Water pump running | `binary_sensor` | 0x0004 bit 5 | likely (off ~80 s after power-off, on when the user saw the pump start 15:56:15) |
+| Heating active (or compressor enable) | `binary_sensor` | 0x0004 bit 0 | candidate (off at power-off, on 5 s after pump start) |
+| Compressor running | `binary_sensor` | derive from 0x001b > 0 or current 0x0020 > 0 | derived |
 | Defrosting | `binary_sensor` | status block | to map (wait for a defrost) |
 | Water flow alarm | `binary_sensor` | status block | to map |
 | Any fault | `binary_sensor` | status block | to map |
@@ -170,11 +173,23 @@ WiFi icon (Tuya module, no longer relevant).
   ESPHome external component or an HA-side template; plain entities work
   without it.
 
+## Observed sequences
+
+Off/on 2026-10-03 (restart delay of a few minutes is normal for this unit):
+
+| Time | Event | Status bits | Compressor / fan |
+|---|---|---|---|
+| 15:52:40 | off written (0x003f bit 0 = 0) | 0x0004 bit 0 off, 0x0005 bit 7 off | ramping down from 54 Hz |
+| 15:53:15 | on written | 0x0005 bit 7 on | 22 Hz, ramping down |
+| 15:54:01 | compressor stopped | 0x0004 bit 5 off | 0 Hz, 0 A, fan still on |
+| 15:56:15 | water pump started (seen by user) | 0x0004 bit 5 on | EEV to 300 (start position) |
+| 15:56:20 | | 0x0004 bit 0 on | |
+| 15:57:32 | boost set by user, compressor running | 0x0004 bit 7 on | 41 Hz, fan 728, 7 A |
+
 ## Open questions
 
 - Timers, clock, auto mode: change each on the controller with a note, then
   diff the settings block (P01-P05 are done).
-- On/off: capture a power-off to confirm 0x003f bit 0.
 - Error/fault bits: wait for a real fault or defrost (multi-day capture).
 - Does the PCB also answer the generic protocol (version at 0x0360-0x0363,
   user area 0x0300, coils)? Test with a single read in a polling gap, once a
