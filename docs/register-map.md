@@ -29,7 +29,7 @@ Sources, in order of trust:
 | Framing | Modbus RTU, 9600 baud, 8N1 | capture + WFI sheet |
 | Roles | controller = master, heat pump PCB = slave 0x01 | capture + WFI sheet |
 | Functions seen | 0x03 read holding, 0x10 write multiple | capture |
-| Scaling | temperatures x10 per the generic doc ("255 = 25.5") - NOT yet verified on this unit; the status values below look like whole degrees | generic doc |
+| Scaling | mixed: most temperatures raw/2, inlet water raw/10, exhaust whole degrees (see Sensors) | capture + A01-A14 readout |
 
 ## Controller behaviour (what a replacement must imitate)
 
@@ -62,26 +62,8 @@ master is used ("If adopt Modbus, the controller should be unplug to the PCB").
 ## Candidates (unverified)
 
 - 0x0042 = 27: matches P01 (heating setpoint) factory default 27 C. Verify by
-  changing the setpoint.
-- Status registers that vary with time (live sensors). Map them by reading
-  A01-A14 on the controller (hold the button 3 s for "Parameter checking"),
-  noting the time, and matching:
-
-| Addr | Range seen | Guess |
-|---|---|---|
-| 0x000f | 274..275 | ? |
-| 0x0010 | 58..60 | temperature? |
-| 0x0011 | 39..42 | temperature? |
-| 0x0012 | 8..14 | water/ambient temperature? |
-| 0x0013 | 11..22 | piping temperature? |
-| 0x0014 | 59..69 | exhaust/discharge temperature? |
-| 0x0015 | 72..79 | ? |
-| 0x0018 | 123..152 | EEV aperture or radiator temperature? |
-| 0x001a | 55..72 | compressor frequency (Hz)? |
-| 0x001b | 54..72 | compressor frequency target? |
-| 0x001e | 537..550 | voltage or EEV steps? |
-| 0x0020 | 8..10 | compressor current (A)? |
-| 0x0024 | 706..859 | fan speed (r/min)? |
+  changing the setpoint. Note: settings may use yet another scaling.
+- The live sensors are mapped (see "Sensors" under the ESPHome target).
 
 ## Target: ESPHome replacement controller
 
@@ -107,27 +89,42 @@ Update a row when its register is confirmed.
 
 ### Sensors (manual A01-A14, "Parameter checking" menu)
 
-| Entity | Unit | Register | Status |
-|---|---|---|---|
-| A01 inlet water temp. | C | status block | to map |
-| A02 outlet water temp. | C | status block | to map |
-| A03 ambient temp. | C | status block | to map |
-| A04 exhaust temp. | C | 0x0014? | to map |
-| A05 gas return temp. | C | status block | to map |
-| A06 outer piping temp. | C | status block | to map |
-| A07 inner piping temp. | C | status block | to map |
-| A08 EEV aperture | steps | status block | to map |
-| A09 compressor current | A | 0x0020? | to map |
-| A10 radiator temp. | C | status block | to map |
-| A11 supply voltage | V | status block | to map |
-| A12 compressor frequency | Hz | 0x001a? | to map |
-| A13 fan motor speed | r/min | 0x0024? | to map |
-| A14 fan motor speed (2nd) | r/min | status block | to map |
+Mapped 2026-10-03 ~15:40 by reading A01-A14 on the controller (hold [-] 3 s,
+step with [+]/[-], short press [power] to exit) and matching each value to the
+status block polled at that moment. The readouts are in the capture log as
+"Axx ... (user readout)" notes. The menu triggers no extra bus requests: all
+values come from the normal 1 s poll.
 
-Mapping method: on the controller, hold the button 3 s for "Parameter
-checking", step through A01-A14 and note each value with the time; match
-against the status block polled at that moment. This also settles the
-temperature scaling (whole degrees vs x10).
+**Scaling is mixed.** Most temperatures are half degrees (raw / 2); inlet
+water is tenths (raw / 10); exhaust is whole degrees. Do not assume a single
+scale for new registers.
+
+| Entity | Register | Raw at readout | Scaling | Display | Status |
+|---|---|---|---|---|---|
+| A01 inlet water temp. | 0x000f | 275 | / 10 | 27.5 C | confirmed |
+| A02 outlet water temp. | 0x0010 | 59 | / 2 | 29.5 C | confirmed |
+| A03 ambient temp. | 0x0011 | 41 | / 2 | 20.5 C | confirmed |
+| A04 exhaust temp. | 0x0015 | 76 | x 1 | 76 C | confirmed |
+| A05 gas return temp. | 0x0013 | 14 | / 2 | 7.0 C | confirmed |
+| A06 outer piping temp. | 0x0012 | 12 | / 2 | 6.0 C | confirmed |
+| A07 inner piping temp. | 0x0014 | 64 | / 2 | 32.0 C | confirmed |
+| A08 EEV aperture | 0x0018 | 125 | x 1 | 125 steps | confirmed |
+| A09 compressor current | 0x0020 | 8 | x 1 | 8 A | confirmed |
+| A10 radiator temp. | 0x001f | 80 | / 2 | 40.0 C | confirmed |
+| A11 voltage (inverter DC bus, ~1.35 x 400 V AC) | 0x001e | 544 | x 1 | 544 V | confirmed |
+| A12 compressor frequency (actual) | 0x001b | 54 | x 1 | 54 Hz | confirmed |
+| A13 fan motor speed | 0x0024 | 724 | x 1 | 724 r/min | confirmed |
+| A14 fan motor speed (2nd fan) | 0x0025 | 0 | x 1 | 0 (single-fan unit) | likely (several registers read 0) |
+
+Extra sensors found along the way (not in the A menu):
+
+| Entity | Register | Evidence | Status |
+|---|---|---|---|
+| Compressor target frequency | 0x001a | tracks 0x001b one step ahead (55 vs 54), both rose together during boost | likely |
+
+Unknown so far in the sensor region: 0x001c, 0x001d, 0x0026-0x0034 (all 0
+while running), and the 0x7fff "not present" slots 0x0016, 0x0017, 0x0019,
+0x0021-0x0023, 0x002a, 0x002b, 0x002d, 0x0035-0x003d.
 
 ### Status and alarms
 
@@ -175,7 +172,6 @@ WiFi icon (Tuya module, no longer relevant).
 - Does the PCB also answer the generic protocol (version at 0x0360-0x0363,
   user area 0x0300, coils)? Test with a single read in a polling gap, once a
   transmitting setup exists.
-- Temperature scaling: whole degrees or x10? Settle with the A01-A14 cross-check.
 
 ## Snapshot: status block 0x0000-0x003e
 
