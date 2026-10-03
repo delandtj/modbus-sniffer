@@ -132,7 +132,17 @@ ring - a cursor is just "the sequence number I want next". Consequences:
   paths cannot be slowed by the LED, and if the RMT setup fails the task just
   returns. Deliberately NOT hooked into the panic path - esp-backtrace owns the
   panic handler and its message on /dev/ttyACM0 is worth more than a red LED.
-  Colour table is in the README.
+  Colour table is in the README. VERIFIED on hardware 2026-10-03: boots clean
+  (no panic, no reset loop), rejoins the AP (`wifi=up ip=192.168.64.161`), the
+  capture daemon reconnects by itself, and real 9600 8E1 frames driven in from
+  the FTDI on /dev/ttyUSB0 decoded as `OK` (green) and `BAD_CRC` (red) with no
+  new `uart_errors`. The LED itself was confirmed by eye - nothing in the
+  firmware can report its colour back. Repeat the test with:
+  `for i in 1 2 3 4 5 6; do printf '\x01\x03\x00\x00\x00\x0a\xc5\xcd' > /dev/ttyUSB0; sleep 0.7; done`
+  (last byte `\x00` instead of `\xcd` for a BAD_CRC frame). If every byte comes
+  back as a one-byte SHORT line of 0x7f/0xfe/0xff, the FTDI's A/B are swapped -
+  the sniffer then sees the bit-inverted line, which is a wiring fault and not a
+  bus-setting one.
 - The embassy dependencies moved from git (embassy-rs/embassy main) to the
   equivalent crates.io releases. The versions matched exactly; the only source
   change needed was the RCC enum variant casing (`PllSource::HSE`,
