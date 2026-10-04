@@ -621,13 +621,21 @@ pub const RING_BYTES: usize = 64 * 1024;
 pub const RING_LINES: usize = 1024;
 
 /// Number of independent cursors a [`LineBus`] can wake.
-pub const RING_CONSUMERS: usize = 2;
+pub const RING_CONSUMERS: usize = 3;
 
 /// Cursor index of the USB-Serial-JTAG consumer.
 pub const CONSUMER_USB: usize = 0;
 
 /// Cursor index of the TCP consumer.
 pub const CONSUMER_TCP: usize = 1;
+
+/// Cursor index of the second TCP consumer: the replacement controller's
+/// console port (wfi028t-controller ADR 0002, TCP 4001).
+///
+/// The sniffer firmwares have no console port and never wait on this signal.
+/// The whole cost of the extra slot is one more `Signal` in the ring and one
+/// more `signal()` call per published line.
+pub const CONSUMER_CONSOLE: usize = 2;
 
 /// The line ring as the firmwares instantiate it.
 pub type SnifferBus = LineBus<RING_BYTES, RING_LINES>;
@@ -864,7 +872,8 @@ impl<const N: usize, const M: usize> LineBus<N, M> {
     /// Read at `cursor`, waiting for the producer if the ring is caught up.
     ///
     /// `consumer` selects which wakeup signal to wait on and must be below
-    /// [`RING_CONSUMERS`]; indices are [`CONSUMER_USB`] and [`CONSUMER_TCP`].
+    /// [`RING_CONSUMERS`]; indices are [`CONSUMER_USB`], [`CONSUMER_TCP`] and
+    /// [`CONSUMER_CONSOLE`].
     pub async fn next(&self, consumer: usize, cursor: &mut u64, out: &mut [u8]) -> Chunk {
         loop {
             match self.try_next(cursor, out) {
