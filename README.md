@@ -362,7 +362,9 @@ the mapping workflow.
 
 The heat pump this was built for (WFI-028T/035T) is documented in the sibling
 project `../wfi028t-controller`: register map, vendor documents and the design
-for a replacement controller.
+for a replacement controller. The bus captures that map was built from (stock
+controller, 2026-10-03 and 2026-10-04, breaker test included) are in
+[`docs/wfi028t-logs/`](docs/wfi028t-logs/README.md).
 
 ## Scope
 
