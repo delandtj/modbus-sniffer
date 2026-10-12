@@ -40,6 +40,21 @@ const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 /// Commands allowed in flight at once.
 const MAX_PENDING: usize = 8;
 
+/// TCP keepalive on the device connection: first probe after this much
+/// silence, then every [`KEEPALIVE_INTERVAL`], giving up after
+/// [`KEEPALIVE_RETRIES`] unanswered probes.
+///
+/// The daemon only reads, so without it a device that reboots (an OTA
+/// update, a power cut) leaves us on a connection the device no longer
+/// knows: no FIN or RST ever arrives, `next_line()` waits forever and the
+/// log stays silent. A rebooted device answers the first probe with a RST;
+/// one that is gone entirely is dropped after ~25 s. Probes cost nothing on
+/// a busy bus and still work on a silent one, where a read timeout would
+/// not.
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(10);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
+const KEEPALIVE_RETRIES: u32 = 3;
+
 #[derive(Debug, Clone)]
 pub struct CaptureConfig {
     /// `host:port` of the sniffer.
@@ -168,6 +183,9 @@ pub async fn run_with_clock<C: Clock + Clone>(cfg: CaptureConfig, clock: C) -> R
         match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&cfg.device)).await {
             Ok(Ok(stream)) => {
                 let _ = stream.set_nodelay(true);
+                if let Err(e) = enable_keepalive(&stream) {
+                    sink.send(clock.now(), &format!("CAPTURE keepalive not enabled: {e}"));
+                }
                 sink.send(clock.now(), &format!("CAPTURE connected to {}", cfg.device));
                 backoff = INITIAL_BACKOFF;
                 state.offset_ms = None;
@@ -302,6 +320,15 @@ async fn session<C: Clock>(
             }
         }
     }
+}
+
+/// Turn on TCP keepalive with the daemon's timings (see [`KEEPALIVE_IDLE`]).
+fn enable_keepalive(stream: &TcpStream) -> std::io::Result<()> {
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(KEEPALIVE_IDLE)
+        .with_interval(KEEPALIVE_INTERVAL)
+        .with_retries(KEEPALIVE_RETRIES);
+    socket2::SockRef::from(stream).set_tcp_keepalive(&keepalive)
 }
 
 /// Sleep until `deadline`, or forever when there is nothing to wait for.
@@ -544,6 +571,20 @@ pub async fn control_request(path: &Path, command: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn device_connection_gets_keepalive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        enable_keepalive(&stream).unwrap();
+        let sock = socket2::SockRef::from(&stream);
+        assert!(sock.keepalive().unwrap());
+        assert_eq!(sock.tcp_keepalive_time().unwrap(), KEEPALIVE_IDLE);
+        assert_eq!(sock.tcp_keepalive_interval().unwrap(), KEEPALIVE_INTERVAL);
+        assert_eq!(sock.tcp_keepalive_retries().unwrap(), KEEPALIVE_RETRIES);
+    }
 
     #[test]
     fn command_replies_are_recognised() {

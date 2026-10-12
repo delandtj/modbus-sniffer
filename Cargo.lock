@@ -1831,6 +1831,7 @@ dependencies = [
  "flate2",
  "humantime",
  "modbus-sniffer-core",
+ "socket2",
  "tempfile",
  "tokio",
 ]
